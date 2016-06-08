@@ -258,27 +258,11 @@ static size_t LZ4_read_ARCH(const void* p)
 
 static void LZ4_copy4(void* dstPtr, const void* srcPtr)
 {
-    if (LZ4_UNALIGNED_ACCESS)
-    {
-        *(U32*)dstPtr = *(U32*)srcPtr;
-        return;
-    }
     memcpy(dstPtr, srcPtr, 4);
 }
 
 static void LZ4_copy8(void* dstPtr, const void* srcPtr)
 {
-#if GCC_VERSION!=409  /* disabled on GCC 4.9, as it generates invalid opcode (crash) */
-    if (LZ4_UNALIGNED_ACCESS)
-    {
-        if (LZ4_64bits())
-            *(U64*)dstPtr = *(U64*)srcPtr;
-        else
-            ((U32*)dstPtr)[0] = ((U32*)srcPtr)[0],
-            ((U32*)dstPtr)[1] = ((U32*)srcPtr)[1];
-        return;
-    }
-#endif
     memcpy(dstPtr, srcPtr, 8);
 }
 
