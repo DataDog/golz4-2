@@ -12,6 +12,8 @@ import (
 	"testing/quick"
 )
 
+const corpusSize = 4746
+
 func TestCompressionRatio(t *testing.T) {
 	input, err := ioutil.ReadFile("sample.txt")
 	if err != nil {
@@ -23,7 +25,7 @@ func TestCompressionRatio(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if want := 4746; want != outSize {
+	if want := corpusSize; want != outSize {
 		t.Fatalf("Compressed output length != expected: %d != %d", outSize, want)
 	}
 }
