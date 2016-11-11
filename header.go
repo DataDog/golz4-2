@@ -53,8 +53,8 @@ func UncompressAllocHdr(out, in []byte) ([]byte, error) {
 	if origlen > uint32(len(out)) {
 		out = make([]byte, origlen)
 	}
-	err := Uncompress(out, in[:4])
-	return out[:origlen], err
+	err := UncompressHdr(out, in)
+	return out, err
 }
 
 // CompressHCHdr implements high-compression ratio compression.

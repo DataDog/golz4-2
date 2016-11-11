@@ -41,8 +41,7 @@ func TestCompressionHdr(t *testing.T) {
 		t.Fatal("Output buffer is empty.")
 	}
 	output = output[:outSize]
-	decompressed := make([]byte, len(input))
-	err = UncompressHdr(decompressed, output)
+	decompressed, err := UncompressAllocHdr(nil, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
