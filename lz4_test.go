@@ -20,7 +20,7 @@ func TestCompressionRatio(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := make([]byte, CompressBound(input))
-	outSize, err := Compress(input, output)
+	outSize, err := Compress(output, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestCompressionRatio(t *testing.T) {
 func TestCompression(t *testing.T) {
 	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	output := make([]byte, CompressBound(input))
-	outSize, err := Compress(input, output)
+	outSize, err := Compress(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestCompression(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestCompression(t *testing.T) {
 func TestEmptyCompression(t *testing.T) {
 	input := []byte("")
 	output := make([]byte, CompressBound(input))
-	outSize, err := Compress(input, output)
+	outSize, err := Compress(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestEmptyCompression(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -75,7 +75,7 @@ func TestEmptyCompression(t *testing.T) {
 func TestNoCompression(t *testing.T) {
 	input := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	output := make([]byte, CompressBound(input))
-	outSize, err := Compress(input, output)
+	outSize, err := Compress(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestNoCompression(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -96,13 +96,13 @@ func TestNoCompression(t *testing.T) {
 func TestCompressionError(t *testing.T) {
 	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	output := make([]byte, 1)
-	_, err := Compress(input, output)
+	_, err := Compress(output, input)
 	if err == nil {
 		t.Fatalf("Compression should have failed but didn't")
 	}
 
 	output = make([]byte, 0)
-	_, err = Compress(input, output)
+	_, err = Compress(output, input)
 	if err == nil {
 		t.Fatalf("Compression should have failed but didn't")
 	}
@@ -111,7 +111,7 @@ func TestCompressionError(t *testing.T) {
 func TestDecompressionError(t *testing.T) {
 	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	output := make([]byte, CompressBound(input))
-	outSize, err := Compress(input, output)
+	outSize, err := Compress(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -120,19 +120,19 @@ func TestDecompressionError(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input)-1)
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err == nil {
 		t.Fatalf("Decompression should have failed")
 	}
 
 	decompressed = make([]byte, 1)
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err == nil {
 		t.Fatalf("Decompression should have failed")
 	}
 
 	decompressed = make([]byte, 0)
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err == nil {
 		t.Fatalf("Decompression should have failed")
 	}
@@ -164,7 +164,7 @@ func TestCompressBound(t *testing.T) {
 func TestFuzz(t *testing.T) {
 	f := func(input []byte) bool {
 		output := make([]byte, CompressBound(input))
-		outSize, err := Compress(input, output)
+		outSize, err := Compress(output, input)
 		if err != nil {
 			t.Fatalf("Compression failed: %v", err)
 		}
@@ -173,7 +173,7 @@ func TestFuzz(t *testing.T) {
 		}
 		output = output[:outSize]
 		decompressed := make([]byte, len(input))
-		err = Uncompress(output, decompressed)
+		err = Uncompress(decompressed, output)
 		if err != nil {
 			t.Fatalf("Decompression failed: %v", err)
 		}

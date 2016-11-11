@@ -20,7 +20,7 @@ func TestCompressHdrRatio(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := make([]byte, CompressBoundHdr(input))
-	outSize, err := CompressHdr(input, output)
+	outSize, err := CompressHdr(output, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestCompressHdrRatio(t *testing.T) {
 func TestCompressionHdr(t *testing.T) {
 	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	output := make([]byte, CompressBoundHdr(input))
-	outSize, err := CompressHdr(input, output)
+	outSize, err := CompressHdr(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestCompressionHdr(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = UncompressHdr(output, decompressed)
+	err = UncompressHdr(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestCompressionHdr(t *testing.T) {
 func TestEmptyCompressionHdr(t *testing.T) {
 	input := []byte("")
 	output := make([]byte, CompressBoundHdr(input))
-	outSize, err := CompressHdr(input, output)
+	outSize, err := CompressHdr(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestEmptyCompressionHdr(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = UncompressHdr(output, decompressed)
+	err = UncompressHdr(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestPythonInterop(t *testing.T) {
 	}
 
 	out := make([]byte, CompressBoundHdr(corpus))
-	count, err := CompressHdr(corpus, out)
+	count, err := CompressHdr(out, corpus)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -18,7 +18,7 @@ func TestCompressionHCRatio(t *testing.T) {
 		t.Fatal(err)
 	}
 	output := make([]byte, CompressBound(input))
-	outSize, err := CompressHC(input, output)
+	outSize, err := CompressHC(output, input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestCompressionHCLevels(t *testing.T) {
 
 	for _, tt := range cases {
 		output := make([]byte, CompressBound(input))
-		outSize, err := CompressHCLevel(input, output, tt.Level)
+		outSize, err := CompressHCLevel(output, input, tt.Level)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func TestCompressionHCLevels(t *testing.T) {
 func TestCompressionHC(t *testing.T) {
 	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	output := make([]byte, CompressBound(input))
-	outSize, err := CompressHC(input, output)
+	outSize, err := CompressHC(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestCompressionHC(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestEmptyCompressionHC(t *testing.T) {
 	input := []byte("")
 	output := make([]byte, CompressBound(input))
 
-	outSize, err := CompressHC(input, output)
+	outSize, err := CompressHC(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestEmptyCompressionHC(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestEmptyCompressionHC(t *testing.T) {
 func TestNoCompressionHC(t *testing.T) {
 	input := []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 	output := make([]byte, CompressBound(input))
-	outSize, err := CompressHC(input, output)
+	outSize, err := CompressHC(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestNoCompressionHC(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestNoCompressionHC(t *testing.T) {
 func TestCompressionErrorHC(t *testing.T) {
 	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	var output []byte
-	outSize, err := CompressHC(input, output)
+	outSize, err := CompressHC(output, input)
 
 	if outSize != 0 {
 		t.Fatalf("%d", outSize)
@@ -149,7 +149,7 @@ func TestCompressionErrorHC(t *testing.T) {
 	}
 
 	output = make([]byte, 1)
-	_, err = CompressHC(input, output)
+	_, err = CompressHC(output, input)
 	if err == nil {
 		t.Fatalf("Compression should have failed but didn't")
 	}
@@ -158,7 +158,7 @@ func TestCompressionErrorHC(t *testing.T) {
 func TestDecompressionErrorHC(t *testing.T) {
 	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	output := make([]byte, CompressBound(input))
-	outSize, err := CompressHC(input, output)
+	outSize, err := CompressHC(output, input)
 	if err != nil {
 		t.Fatalf("Compression failed: %v", err)
 	}
@@ -167,19 +167,19 @@ func TestDecompressionErrorHC(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input)-1)
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err == nil {
 		t.Fatalf("Decompression should have failed")
 	}
 
 	decompressed = make([]byte, 1)
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err == nil {
 		t.Fatalf("Decompression should have failed")
 	}
 
 	decompressed = make([]byte, 0)
-	err = Uncompress(output, decompressed)
+	err = Uncompress(decompressed, output)
 	if err == nil {
 		t.Fatalf("Decompression should have failed")
 	}
@@ -188,7 +188,7 @@ func TestDecompressionErrorHC(t *testing.T) {
 func TestFuzzHC(t *testing.T) {
 	f := func(input []byte) bool {
 		output := make([]byte, CompressBound(input))
-		outSize, err := CompressHC(input, output)
+		outSize, err := CompressHC(output, input)
 		if err != nil {
 			t.Fatalf("Compression failed: %v", err)
 		}
@@ -197,7 +197,7 @@ func TestFuzzHC(t *testing.T) {
 		}
 		output = output[:outSize]
 		decompressed := make([]byte, len(input))
-		err = Uncompress(output, decompressed)
+		err = Uncompress(decompressed, output)
 		if err != nil {
 			t.Fatalf("Decompression failed: %v", err)
 		}

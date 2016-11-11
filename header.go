@@ -18,8 +18,8 @@ func CompressBoundHdr(in []byte) int {
 // out and any errors that may have been encountered.  This version adds a
 // 4-byte little endian "header" indicating the length of the original message
 // so that it may be decompressed successfully later.
-func CompressHdr(in, out []byte) (count int, err error) {
-	count, err = Compress(in, out[4:])
+func CompressHdr(out, in []byte) (count int, err error) {
+	count, err = Compress(out[4:], in)
 	binary.LittleEndian.PutUint32(out, uint32(len(in)))
 	return count + 4, err
 }
@@ -30,7 +30,7 @@ func CompressHdr(in, out []byte) (count int, err error) {
 // reuse buffers.
 func CompressAllocHdr(in []byte) (out []byte, err error) {
 	out = make([]byte, CompressBoundHdr(in))
-	count, err := CompressHdr(in, out)
+	count, err := CompressHdr(out, in)
 	if err != nil {
 		return out, err
 	}
@@ -39,8 +39,8 @@ func CompressAllocHdr(in []byte) (out []byte, err error) {
 
 // UncompressHdr uncompresses in into out.  Out must have enough space allocated
 // for the uncompressed message.
-func UncompressHdr(in, out []byte) error {
-	return Uncompress(in[4:], out)
+func UncompressHdr(out, in []byte) error {
+	return Uncompress(out, in[4:])
 }
 
 // UncompressAllocHdr uncompresses the stream from in into out if out has enough
@@ -48,25 +48,25 @@ func UncompressHdr(in, out []byte) error {
 // This function uses the "length header" to detemrine how much space is
 // necessary fo the result message, which CloudFlare's implementation doesn't
 // have.
-func UncompressAllocHdr(in, out []byte) ([]byte, error) {
+func UncompressAllocHdr(out, in []byte) ([]byte, error) {
 	origlen := binary.LittleEndian.Uint32(in)
 	if origlen > uint32(len(out)) {
 		out = make([]byte, origlen)
 	}
-	err := Uncompress(in[4:], out)
+	err := Uncompress(out, in[:4])
 	return out[:origlen], err
 }
 
 // CompressHCHdr implements high-compression ratio compression.
-func CompressHCHdr(in, out []byte) (count int, err error) {
-	count, err = CompressHC(in, out[4:])
+func CompressHCHdr(out, in []byte) (count int, err error) {
+	count, err = CompressHC(out[4:], in)
 	binary.LittleEndian.PutUint32(out, uint32(len(in)))
 	return count + 4, err
 }
 
 // CompressHCLevelHdr implements high-compression ratio compression.
-func CompressHCLevelHdr(in, out []byte, level int) (count int, err error) {
-	count, err = CompressHCLevel(in, out[4:], level)
+func CompressHCLevelHdr(out, in []byte, level int) (count int, err error) {
+	count, err = CompressHCLevel(out[4:], in, level)
 	binary.LittleEndian.PutUint32(out, uint32(len(in)))
 	return count + 4, err
 }
