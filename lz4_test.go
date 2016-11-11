@@ -145,7 +145,7 @@ func assert(t *testing.T, b bool) {
 }
 
 func TestCompressBound(t *testing.T) {
-	input := make([]byte, 0)
+	var input []byte
 	assert(t, CompressBound(input) == 16)
 
 	input = make([]byte, 1)

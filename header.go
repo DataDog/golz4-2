@@ -8,13 +8,13 @@ import (
 	"encoding/binary"
 )
 
-// CompressBound returns the upper bounds of the size of the compressed
+// CompressBoundHdr returns the upper bounds of the size of the compressed
 // byte plus space for a length header.
 func CompressBoundHdr(in []byte) int {
 	return CompressBound(in) + 4
 }
 
-// Compress compresses in to out.  It returns the number of bytes written to
+// CompressHdr compresses in to out.  It returns the number of bytes written to
 // out and any errors that may have been encountered.  This version adds a
 // 4-byte little endian "header" indicating the length of the original message
 // so that it may be decompressed successfully later.
@@ -24,7 +24,7 @@ func CompressHdr(in, out []byte) (count int, err error) {
 	return count + 4, err
 }
 
-// CompressAlloc is like Compress, but allocates the out slice itself and
+// CompressAllocHdr is like Compress, but allocates the out slice itself and
 // automatically resizes it to the proper size of the compressed output.  This
 // can be more convenient to use if you are in a situation where you cannot
 // reuse buffers.
@@ -37,13 +37,13 @@ func CompressAllocHdr(in []byte) (out []byte, err error) {
 	return out[:count], nil
 }
 
-// Uncompress uncompresses in into out.  Out must have enough space allocated
+// UncompressHdr uncompresses in into out.  Out must have enough space allocated
 // for the uncompressed message.
 func UncompressHdr(in, out []byte) error {
 	return Uncompress(in[4:], out)
 }
 
-// UncompressAlloc uncompresses the stream from in into out if out has enough
+// UncompressAllocHdr uncompresses the stream from in into out if out has enough
 // space.  Otherwise, a new slice is allocated automatically and returned.
 // This function uses the "length header" to detemrine how much space is
 // necessary fo the result message, which CloudFlare's implementation doesn't
@@ -57,14 +57,14 @@ func UncompressAllocHdr(in, out []byte) ([]byte, error) {
 	return out[:origlen], err
 }
 
-// CompressHC implements high-compression ratio compression.
+// CompressHCHdr implements high-compression ratio compression.
 func CompressHCHdr(in, out []byte) (count int, err error) {
 	count, err = CompressHC(in, out[4:])
 	binary.LittleEndian.PutUint32(out, uint32(len(in)))
 	return count + 4, err
 }
 
-// CompressHCLevel implements high-compression ratio compression.
+// CompressHCLevelHdr implements high-compression ratio compression.
 func CompressHCLevelHdr(in, out []byte, level int) (count int, err error) {
 	count, err = CompressHCLevel(in, out[4:], level)
 	binary.LittleEndian.PutUint32(out, uint32(len(in)))

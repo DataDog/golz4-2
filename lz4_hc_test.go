@@ -137,7 +137,7 @@ func TestNoCompressionHC(t *testing.T) {
 
 func TestCompressionErrorHC(t *testing.T) {
 	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
-	output := make([]byte, 0)
+	var output []byte
 	outSize, err := CompressHC(input, output)
 
 	if outSize != 0 {
