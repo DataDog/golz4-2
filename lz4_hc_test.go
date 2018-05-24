@@ -83,7 +83,7 @@ func TestCompressionHC(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = Uncompress(decompressed, output)
+	_, err = Uncompress(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestEmptyCompressionHC(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = Uncompress(decompressed, output)
+	_, err = Uncompress(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestNoCompressionHC(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
-	err = Uncompress(decompressed, output)
+	_, err = Uncompress(decompressed, output)
 	if err != nil {
 		t.Fatalf("Decompression failed: %v", err)
 	}
@@ -167,19 +167,19 @@ func TestDecompressionErrorHC(t *testing.T) {
 	}
 	output = output[:outSize]
 	decompressed := make([]byte, len(input)-1)
-	err = Uncompress(decompressed, output)
+	_, err = Uncompress(decompressed, output)
 	if err == nil {
 		t.Fatalf("Decompression should have failed")
 	}
 
 	decompressed = make([]byte, 1)
-	err = Uncompress(decompressed, output)
+	_, err = Uncompress(decompressed, output)
 	if err == nil {
 		t.Fatalf("Decompression should have failed")
 	}
 
 	decompressed = make([]byte, 0)
-	err = Uncompress(decompressed, output)
+	_, err = Uncompress(decompressed, output)
 	if err == nil {
 		t.Fatalf("Decompression should have failed")
 	}
@@ -197,7 +197,7 @@ func TestFuzzHC(t *testing.T) {
 		}
 		output = output[:outSize]
 		decompressed := make([]byte, len(input))
-		err = Uncompress(decompressed, output)
+		_, err = Uncompress(decompressed, output)
 		if err != nil {
 			t.Fatalf("Decompression failed: %v", err)
 		}

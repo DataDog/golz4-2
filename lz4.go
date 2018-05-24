@@ -7,7 +7,6 @@ import "C"
 
 import (
 	"errors"
-	"fmt"
 	"unsafe"
 )
 
@@ -26,12 +25,12 @@ func clen(s []byte) C.int {
 
 // Uncompress with a known output size. len(out) should be equal to
 // the length of the uncompressed out.
-func Uncompress(out, in []byte) error {
-	if int(C.LZ4_decompress_safe(p(in), p(out), clen(in), clen(out))) < 0 {
-		return errors.New("Malformed compression stream")
+func Uncompress(out, in []byte) (outSize int, err error) {
+	outSize = int(C.LZ4_decompress_safe(p(in), p(out), clen(in), clen(out)))
+	if outSize < 0 {
+		err = errors.New("Malformed compression stream")
 	}
-
-	return nil
+	return
 }
 
 // CompressBound calculates the size of the output buffer needed by
@@ -49,7 +48,7 @@ func CompressBound(in []byte) int {
 func Compress(out, in []byte) (outSize int, err error) {
 	outSize = int(C.LZ4_compress_limitedOutput(p(in), p(out), clen(in), clen(out)))
 	if outSize == 0 {
-		err = fmt.Errorf("insufficient space for compression")
+		err = errors.New("Insufficient space for compression")
 	}
 	return
 }
