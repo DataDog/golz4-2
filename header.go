@@ -40,7 +40,8 @@ func CompressAllocHdr(in []byte) (out []byte, err error) {
 // UncompressHdr uncompresses in into out.  Out must have enough space allocated
 // for the uncompressed message.
 func UncompressHdr(out, in []byte) error {
-	return Uncompress(out, in[4:])
+	_, err := Uncompress(out, in[4:])
+	return err
 }
 
 // UncompressAllocHdr uncompresses the stream from in into out if out has enough
