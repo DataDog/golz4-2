@@ -10,7 +10,7 @@ static int LZ4_decompress_safe_continue_and_memcpy(
 	char* dstBuf, int dstBufCapacity,
 	char* dst)
 {
-	// decompress to ringbuffer
+	// decompress to double buffer
 	int result = LZ4_decompress_safe_continue(stream, src, dstBuf, srcSize, dstBufCapacity);
 	if (result > 0) {
 		// copy decompressed data to dst
@@ -23,26 +23,19 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"runtime"
 	"unsafe"
 )
 
 const (
 	// MaxInputSize is the max supported input size. see macro LZ4_MAX_INPUT_SIZE.
-	MaxInputSize = 0x7E000000 // 2 113 929 216 bytes
-
-	minDictionarySize = 4096
-	minMessageSize    = 256
+	MaxInputSize       = 0x7E000000 // 2 113 929 216 bytes
+	RecommendBlockSize = 1024 * 8
 )
 
-// Error codes
-var (
-	ErrSrcTooLarge = errors.New("src is too large")
-	ErrCompress    = errors.New("compress: dst is not large enough")
-	ErrDecompress  = errors.New("decompress: dst is not large enough, or src data is malformed")
-	ErrNoData      = errors.New("no data")
-	ErrInternal    = errors.New("internal error")
-)
+var errShortRead = errors.New("short read")
 
 // p gets a char pointer to the first byte of a []byte slice
 func p(in []byte) *C.char {
@@ -97,214 +90,255 @@ func Compress(out, in []byte) (outSize int, err error) {
 	return
 }
 
-// ContinueCompress is a struct for lz4 streaming API
-type ContinueCompress struct {
-	dictionarySize     int
-	maxMessageSize     int
-	lz4Stream          *C.LZ4_stream_t
-	ringBuffer         []byte
-	msgLen             int
-	processTimes       int64
-	totalSrcLen        int64
-	totalCompressedLen int64
+// Writer is an io.WriteCloser that lz4 compress its input.
+type Writer struct {
+	lz4Stream *C.LZ4_stream_t
+	// dict             []byte
+	dstBuffer []byte
+	// firstError       error
+	underlyingWriter io.Writer
 }
 
-// NewContinueCompress returns a new ContinueCompress object.
-// Call Release when the ContinueCompress is no longer needed.
-func NewContinueCompress(dictionarySize, maxMessageSize int) *ContinueCompress {
-	if dictionarySize < minDictionarySize {
-		dictionarySize = minDictionarySize
+// NewWriter creates a new Writer. Writes to
+// the writer will be written in compressed form to w.
+func NewWriter(w io.Writer) *Writer {
+	return &Writer{
+		lz4Stream:        C.LZ4_createStream(),
+		dstBuffer:        make([]byte, CompressBoundInt(RecommendBlockSize)),
+		underlyingWriter: w,
 	}
-	if maxMessageSize < minMessageSize {
-		maxMessageSize = minMessageSize
-	}
-	if maxMessageSize > MaxInputSize {
-		maxMessageSize = MaxInputSize
-	}
-	cc := &ContinueCompress{
-		dictionarySize: dictionarySize,
-		maxMessageSize: maxMessageSize,
-		lz4Stream:      C.LZ4_createStream(),
-		ringBuffer:     make([]byte, 0, dictionarySize+maxMessageSize),
-	}
-	runtime.SetFinalizer(cc, freeContinueCompress)
-	return cc
+
 }
 
-func freeContinueCompress(v interface{}) {
-	v.(*ContinueCompress).Release()
+// Write writes a compressed form of p to the underlying io.Writer.
+func (w *Writer) Write(p []byte) (int, error) {
+
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	// double buffer for input
+	iptBuffer2D := make([][]byte, 2)
+	for i := 0; i < 2; i++ {
+		iptBuffer2D[i] = make([]byte, RecommendBlockSize)
+	}
+
+	inpBufIndex := 0
+
+	// Check if dstBuffer is enough
+	if len(w.dstBuffer) < CompressBound(p) {
+		w.dstBuffer = make([]byte, CompressBound(p))
+	}
+
+	offset := 0
+	compLenth := 0
+
+	for {
+		// copy RecommendBlockSize of p to iptBuffer2D[inpBufIndex]
+		inpBytes := copy(iptBuffer2D[inpBufIndex], p[offset:])
+		if inpBytes == 0 {
+			break
+		}
+		retCode := C.LZ4_compress_fast_continue(
+			w.lz4Stream,
+			(*C.char)(unsafe.Pointer(&iptBuffer2D[inpBufIndex][0])),
+			(*C.char)(unsafe.Pointer(&w.dstBuffer[0])),
+			C.int(inpBytes),
+			C.int(len(w.dstBuffer)),
+			1)
+		if retCode <= 0 {
+			break
+		}
+
+		written := int(retCode)
+		fmt.Println("written:", written)
+		// Write to underlying buffer
+		_, err := w.underlyingWriter.Write(w.dstBuffer[:written])
+
+		// Same behaviour as zlib, we can't know how much data we wrote, only
+		// if there was an error
+		if err != nil {
+			return 0, err
+		}
+
+		compLenth += written
+		inpBufIndex = (inpBufIndex + 1) % 2
+		offset += RecommendBlockSize
+		if offset >= len(p) {
+			break
+		}
+	}
+	return compLenth, nil
 }
 
-// Release releases all the resources occupied by ContinueCompress.
-// cc cannot be used after the release.
-func (cc *ContinueCompress) Release() {
-	if cc.lz4Stream != nil {
-		C.LZ4_freeStream(cc.lz4Stream)
-		cc.lz4Stream = nil
+// Close releases all the resources occupied by Writer.
+// w cannot be used after the release.
+func (w *Writer) Close() error {
+	if w.lz4Stream != nil {
+		C.LZ4_freeStream(w.lz4Stream)
+		w.lz4Stream = nil
 	}
-}
-
-// Write writes src to cc.
-func (cc *ContinueCompress) Write(src []byte) error {
-	srcLen := len(src)
-	if srcLen == 0 {
-		return nil
-	}
-	if cc.msgLen+srcLen > cc.maxMessageSize {
-		return ErrSrcTooLarge
-	}
-	if len(cc.ringBuffer)+srcLen > cap(cc.ringBuffer) {
-		return ErrInternal
-	}
-	cc.ringBuffer = append(cc.ringBuffer, src...)
-	cc.msgLen += srcLen
 	return nil
 }
 
-// MsgLen returns the length of buffered data.
-func (cc *ContinueCompress) MsgLen() int {
-	return cc.msgLen
+// reader is an io.ReadCloser that decompresses when read from.
+type reader struct {
+	lz4Stream           *C.LZ4_streamDecode_t
+	compressionBuffer   []byte
+	compressionLeft     int
+	decompressionBuffer [][]byte
+	underlyingReader    io.Reader
 }
 
-// Process compresses buffered data into `dst`.
-// len(dst) should >= CompressBoundInt(cc.MsgLen()).
-func (cc *ContinueCompress) Process(dst []byte) (int, error) {
-	if cc.msgLen == 0 {
-		return 0, ErrNoData
-	}
-	if cc.msgLen > len(cc.ringBuffer) {
-		return 0, ErrInternal
-	}
-	if len(dst) < CompressBoundInt(cc.msgLen) {
-		return 0, ErrDecompress
+// NewReader creates a new io.ReadCloser.  Reads from the returned ReadCloser
+// read and decompress data from r.  It is the caller's responsibility to call
+// Close on the ReadCloser when done.  If this is not done, underlying objects
+// in the lz4 library will not be freed.
+func NewReader(r io.Reader) io.ReadCloser {
+	// double buffer
+	decompressionBuffer2D := make([][]byte, 2)
+	for i := 0; i < 2; i++ {
+		decompressionBuffer2D[i] = make([]byte, RecommendBlockSize)
 	}
 
-	offset := len(cc.ringBuffer) - cc.msgLen
-	result := C.LZ4_compress_fast_continue(
-		cc.lz4Stream,
-		(*C.char)(unsafe.Pointer(&cc.ringBuffer[offset])),
-		(*C.char)(unsafe.Pointer(&dst[0])),
-		C.int(cc.msgLen),
-		C.int(len(dst)),
-		1)
-	if result <= 0 {
-		return 0, ErrInternal
-	}
-
-	// Update stats
-	cc.processTimes++
-	cc.totalSrcLen += int64(cc.msgLen)
-	cc.totalCompressedLen += int64(result)
-
-	// Add and wraparound the ringbuffer offset
-	if len(cc.ringBuffer) >= cc.dictionarySize {
-		cc.ringBuffer = cc.ringBuffer[0:0]
-	}
-	// Reset msgLen
-	cc.msgLen = 0
-	return int(result), nil
-}
-
-// Stats returns statistics data.
-func (cc *ContinueCompress) Stats() (processTimes, totalSrcLen, totalCompressedLen int64) {
-	return cc.processTimes, cc.totalSrcLen, cc.totalCompressedLen
-}
-
-// ContinueDecompress implements streaming decompression.
-type ContinueDecompress struct {
-	dictionarySize       int
-	maxMessageSize       int
-	lz4Stream            *C.LZ4_streamDecode_t
-	ringBuffer           []byte
-	offset               int
-	processTimes         int64
-	totalSrcLen          int64
-	totalDecompressedLen int64
-}
-
-// NewContinueDecompress returns a new ContinueDecompress object.
-//
-// dictionarySize and maxMessageSize must be exactly the same as NewContinueCompress.
-// see LZ4_decompress_*_continue() - Synchronized mode.
-//
-// Call Release when the ContinueDecompress is no longer needed.
-func NewContinueDecompress(dictionarySize, maxMessageSize int) *ContinueDecompress {
-	if dictionarySize < minDictionarySize {
-		dictionarySize = minDictionarySize
-	}
-	if maxMessageSize < minMessageSize {
-		maxMessageSize = minMessageSize
-	}
-	if maxMessageSize > MaxInputSize {
-		maxMessageSize = MaxInputSize
-	}
-	cd := &ContinueDecompress{
-		dictionarySize: dictionarySize,
-		maxMessageSize: maxMessageSize,
-		lz4Stream:      C.LZ4_createStreamDecode(),
-		ringBuffer:     make([]byte, dictionarySize+maxMessageSize),
-	}
-	runtime.SetFinalizer(cd, freeContinueDecompress)
-	return cd
-}
-
-func freeContinueDecompress(v interface{}) {
-	v.(*ContinueDecompress).Release()
-}
-
-// Release releases all the resources occupied by cd.
-// cd cannot be used after the release.
-func (cd *ContinueDecompress) Release() {
-	if cd.lz4Stream != nil {
-		C.LZ4_freeStreamDecode(cd.lz4Stream)
-		cd.lz4Stream = nil
+	return &reader{
+		lz4Stream:           C.LZ4_createStreamDecode(),
+		compressionBuffer:   make([]byte, RecommendBlockSize),
+		decompressionBuffer: decompressionBuffer2D,
+		underlyingReader:    r,
 	}
 }
 
-// Process decompresses `src` into `dst`.
-// len(dst) should >= uncompressed_length_of_src_data.
-func (cd *ContinueDecompress) Process(dst, src []byte) (int, error) {
-	if len(src) == 0 {
-		return 0, ErrNoData
+// Close releases all the resources occupied by r.
+// r cannot be used after the release.
+func (r *reader) Close() error {
+	if r.lz4Stream != nil {
+		C.LZ4_freeStreamDecode(r.lz4Stream)
+		r.lz4Stream = nil
 	}
-	if cd.offset < 0 || cd.offset >= cd.dictionarySize {
-		return 0, ErrInternal
-	}
+	return nil
+}
 
-	// Decompress to ringbuffer, then copy to dst
-	var result C.int
-	if dstLen := len(dst); dstLen > 0 {
-		if dstLen > cd.maxMessageSize {
-			dstLen = cd.maxMessageSize
+// Read decompresses `compressionbuffer` into `dst`.
+func (r *reader) Read(dst []byte) (int, error) {
+	decBufIndex := 0
+	// If we already have enough bytes, return
+	// if r.decompSize-r.decompOff >= len(dst) {
+	// 	copy(dst, r.decompressionBuffer[r.decompOff:])
+	// 	r.decompOff += len(dst)
+	// 	return len(dst), nil
+	// }
+
+	copy(dst, r.decompressionBuffer[decBufIndex])
+	got := 0
+
+	// for got < len(dst) {
+
+	for {
+		// Populate src
+		// fmt.Println("got:", got, "len dst:", len(dst))
+		src := r.compressionBuffer
+		reader := r.underlyingReader
+		fmt.Println("srcA:", string(src))
+		//read len(src) from reader --> src
+		n, _ := TryReadFull(reader, src[r.compressionLeft:])
+		fmt.Println("!!n:", n, "!!compressionLeft", r.compressionLeft)
+		// if err != nil && err != errShortRead { // Handle underlying reader errors first
+		// 	return 0, fmt.Errorf("failed to read from underlying reader: %s", err)
+		// } else if n == 0 && r.compressionLeft == 0 {
+		// 	return got, io.EOF
+		// }
+
+		src = src[:r.compressionLeft+n]
+		fmt.Println("srcB:", string(src))
+
+		// C code
+		cSrcSize := C.int(len(src))
+		cDstSize := C.int(len(r.decompressionBuffer[decBufIndex]))
+		fmt.Println("cDstSize:", cDstSize, "cSrcSize", cSrcSize, "len(src)", len(src))
+
+		// retCode := C.LZ4_decompress_safe_continue_and_memcpy(
+		// 	r.lz4Stream,
+		// 	(*C.char)(unsafe.Pointer(&src[0])),
+		// 	cSrcSize,
+		// 	(*C.char)(unsafe.Pointer(&r.decompressionBuffer[decBufIndex][0])),
+		// 	cDstSize,
+		// 	(*C.char)(unsafe.Pointer(&dst[0])))
+
+		retCode := C.LZ4_decompress_safe_continue(
+			r.lz4Stream,
+			(*C.char)(unsafe.Pointer(&src[0])),
+			(*C.char)(unsafe.Pointer(&r.decompressionBuffer[decBufIndex][0])),
+			cSrcSize,
+			cDstSize)
+
+		// Keep src here eventhough, we reuse later, the code might be deleted at some point
+		runtime.KeepAlive(src)
+		if retCode <= 0 {
+			fmt.Println("BREAK")
+			break
+			// return 0, fmt.Errorf("failed to decompress: %s", err)
 		}
 
-		result = C.LZ4_decompress_safe_continue_and_memcpy(
-			cd.lz4Stream,
-			(*C.char)(unsafe.Pointer(&src[0])),
-			C.int(len(src)),
-			(*C.char)(unsafe.Pointer(&cd.ringBuffer[cd.offset])),
-			C.int(dstLen),
-			(*C.char)(unsafe.Pointer(&dst[0])))
-	}
-	if result <= 0 {
-		return 0, ErrDecompress
-	}
+		// // Put everything in buffer
+		// if int(cSrcSize) < len(src) {
+		// 	left := src[int(cSrcSize):]
+		// 	copy(r.compressionBuffer, left)
+		// }
+		r.compressionLeft = len(src) - int(cSrcSize)
+		tmp := copy(dst[got:], r.decompressionBuffer[decBufIndex][:int(cDstSize)])
+		got += tmp
+		fmt.Println("got Increased:", got)
 
-	// Update stats
-	cd.processTimes++
-	cd.totalSrcLen += int64(len(src))
-	cd.totalDecompressedLen += int64(result)
+		decBufIndex = (decBufIndex + 1) % 2
 
-	// Add and wraparound the ringbuffer offset
-	cd.offset += int(result)
-	if cd.offset >= cd.dictionarySize {
-		cd.offset = 0
+		// // Resize buffers
+		// nsize := int(retCode) // Hint for next src buffer size
+		// if nsize <= 0 {
+		// 	// Reset to recommended size
+		// 	nsize = RecommendBlockSize
+		// }
+		// if nsize < r.compressionLeft {
+		// 	nsize = r.compressionLeft
+		// }
+		// r.compressionBuffer = resize(r.compressionBuffer, nsize)
 	}
+	fmt.Println("returned here, got is", got)
 
-	return int(result), nil
+	return got, nil
+
 }
 
-// Stats returns statistics data.
-func (cd *ContinueDecompress) Stats() (processTimes, totalSrcLen, totalDecompressedLen int64) {
-	return cd.processTimes, cd.totalSrcLen, cd.totalDecompressedLen
+// TryReadFull reads buffer just as ReadFull does
+// Here we expect that buffer may end and we do not return ErrUnexpectedEOF as ReadAtLeast does.
+// We return errShortRead instead to distinguish short reads and failures.
+// We cannot use ReadFull/ReadAtLeast because it masks Reader errors, such as network failures
+// and causes panic instead of error.
+func TryReadFull(r io.Reader, buf []byte) (n int, err error) {
+	for n < len(buf) && err == nil {
+		var nn int
+		nn, err = r.Read(buf[n:])
+		n += nn
+	}
+	fmt.Println("n:", n, "len buf", len(buf), "err:", err.Error())
+	if n == len(buf) && err == io.EOF {
+		// if n == len(buf) {
+		err = nil // EOF at the end is somewhat expected
+		fmt.Println("RRRRR FULLL1")
+	} else if err == io.EOF {
+		fmt.Println("RRRRR FULLL2")
+		err = errShortRead
+	}
+	return
+}
+
+func resize(in []byte, newSize int) []byte {
+	if in == nil {
+		return make([]byte, newSize)
+	}
+	if newSize <= cap(in) {
+		return in[:newSize]
+	}
+	toAdd := newSize - len(in)
+	return append(in, make([]byte, toAdd)...)
 }
