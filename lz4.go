@@ -32,7 +32,7 @@ import (
 const (
 	// MaxInputSize is the max supported input size. see macro LZ4_MAX_INPUT_SIZE.
 	MaxInputSize       = 0x7E000000 // 2 113 929 216 bytes
-	RecommendBlockSize = 1024 * 8
+	RecommendBlockSize = 1024 * 64
 )
 
 var errShortRead = errors.New("short read")
@@ -92,10 +92,8 @@ func Compress(out, in []byte) (outSize int, err error) {
 
 // Writer is an io.WriteCloser that lz4 compress its input.
 type Writer struct {
-	lz4Stream *C.LZ4_stream_t
-	// dict             []byte
-	dstBuffer []byte
-	// firstError       error
+	lz4Stream        *C.LZ4_stream_t
+	dstBuffer        []byte
 	underlyingWriter io.Writer
 }
 
@@ -132,6 +130,7 @@ func (w *Writer) Write(p []byte) (int, error) {
 
 	offset := 0
 	compLenth := 0
+	C.LZ4_resetStream(w.lz4Stream)
 
 	for {
 		// copy RecommendBlockSize of p to iptBuffer2D[inpBufIndex]
@@ -139,6 +138,7 @@ func (w *Writer) Write(p []byte) (int, error) {
 		if inpBytes == 0 {
 			break
 		}
+
 		retCode := C.LZ4_compress_fast_continue(
 			w.lz4Stream,
 			(*C.char)(unsafe.Pointer(&iptBuffer2D[inpBufIndex][0])),
@@ -151,7 +151,6 @@ func (w *Writer) Write(p []byte) (int, error) {
 		}
 
 		written := int(retCode)
-		fmt.Println("written:", written)
 		// Write to underlying buffer
 		_, err := w.underlyingWriter.Write(w.dstBuffer[:written])
 
@@ -166,8 +165,10 @@ func (w *Writer) Write(p []byte) (int, error) {
 		offset += RecommendBlockSize
 		if offset >= len(p) {
 			break
+
 		}
 	}
+	// C.LZ4_resetStream(w.lz4Stream)
 	return compLenth, nil
 }
 
@@ -187,6 +188,9 @@ type reader struct {
 	compressionBuffer   []byte
 	compressionLeft     int
 	decompressionBuffer [][]byte
+	decompOff           int
+	decompSize          int
+	decBufIndex         int
 	underlyingReader    io.Reader
 }
 
@@ -219,91 +223,55 @@ func (r *reader) Close() error {
 	return nil
 }
 
-// Read decompresses `compressionbuffer` into `dst`.
+// Read decompresses `compressionBuffer` into `dst`.
 func (r *reader) Read(dst []byte) (int, error) {
-	decBufIndex := 0
-	// If we already have enough bytes, return
-	// if r.decompSize-r.decompOff >= len(dst) {
-	// 	copy(dst, r.decompressionBuffer[r.decompOff:])
-	// 	r.decompOff += len(dst)
-	// 	return len(dst), nil
-	// }
-
-	copy(dst, r.decompressionBuffer[decBufIndex])
+	r.decBufIndex = 0
 	got := 0
 
-	// for got < len(dst) {
+	C.LZ4_setStreamDecode(r.lz4Stream, nil, 0)
 
 	for {
 		// Populate src
-		// fmt.Println("got:", got, "len dst:", len(dst))
 		src := r.compressionBuffer
 		reader := r.underlyingReader
-		fmt.Println("srcA:", string(src))
 		//read len(src) from reader --> src
-		n, _ := TryReadFull(reader, src[r.compressionLeft:])
-		fmt.Println("!!n:", n, "!!compressionLeft", r.compressionLeft)
-		// if err != nil && err != errShortRead { // Handle underlying reader errors first
-		// 	return 0, fmt.Errorf("failed to read from underlying reader: %s", err)
-		// } else if n == 0 && r.compressionLeft == 0 {
-		// 	return got, io.EOF
-		// }
+		n, err := TryReadFull(reader, src[r.compressionLeft:])
+		fmt.Println("src:", string(src), "n:", n, "err:", err.Error())
+		if err != nil && err != errShortRead { // Handle underlying reader errors first
+			return 0, fmt.Errorf("failed to read from underlying reader: %s", err)
+		} else if n == 0 && r.compressionLeft == 0 {
+			return got, io.EOF
+		}
 
 		src = src[:r.compressionLeft+n]
-		fmt.Println("srcB:", string(src))
+
+		fmt.Println("src now:", string(src))
 
 		// C code
 		cSrcSize := C.int(len(src))
-		cDstSize := C.int(len(r.decompressionBuffer[decBufIndex]))
-		fmt.Println("cDstSize:", cDstSize, "cSrcSize", cSrcSize, "len(src)", len(src))
-
-		// retCode := C.LZ4_decompress_safe_continue_and_memcpy(
-		// 	r.lz4Stream,
-		// 	(*C.char)(unsafe.Pointer(&src[0])),
-		// 	cSrcSize,
-		// 	(*C.char)(unsafe.Pointer(&r.decompressionBuffer[decBufIndex][0])),
-		// 	cDstSize,
-		// 	(*C.char)(unsafe.Pointer(&dst[0])))
+		cDstSize := C.int(len(r.decompressionBuffer[r.decBufIndex]))
 
 		retCode := C.LZ4_decompress_safe_continue(
 			r.lz4Stream,
 			(*C.char)(unsafe.Pointer(&src[0])),
-			(*C.char)(unsafe.Pointer(&r.decompressionBuffer[decBufIndex][0])),
+			(*C.char)(unsafe.Pointer(&r.decompressionBuffer[r.decBufIndex][0])),
 			cSrcSize,
 			cDstSize)
 
 		// Keep src here eventhough, we reuse later, the code might be deleted at some point
 		runtime.KeepAlive(src)
 		if retCode <= 0 {
-			fmt.Println("BREAK")
+			fmt.Println("BREAK, got is", got, ";dst", string(dst), "retcode", retCode)
 			break
-			// return 0, fmt.Errorf("failed to decompress: %s", err)
 		}
-
-		// // Put everything in buffer
-		// if int(cSrcSize) < len(src) {
-		// 	left := src[int(cSrcSize):]
-		// 	copy(r.compressionBuffer, left)
-		// }
 		r.compressionLeft = len(src) - int(cSrcSize)
-		tmp := copy(dst[got:], r.decompressionBuffer[decBufIndex][:int(cDstSize)])
-		got += tmp
-		fmt.Println("got Increased:", got)
+		// r.decompSize = int(cDstSize)
+		r.decompOff = copy(dst[got:], r.decompressionBuffer[r.decBufIndex])
+		got += r.decompOff
 
-		decBufIndex = (decBufIndex + 1) % 2
+		r.decBufIndex = (r.decBufIndex + 1) % 2
 
-		// // Resize buffers
-		// nsize := int(retCode) // Hint for next src buffer size
-		// if nsize <= 0 {
-		// 	// Reset to recommended size
-		// 	nsize = RecommendBlockSize
-		// }
-		// if nsize < r.compressionLeft {
-		// 	nsize = r.compressionLeft
-		// }
-		// r.compressionBuffer = resize(r.compressionBuffer, nsize)
 	}
-	fmt.Println("returned here, got is", got)
 
 	return got, nil
 
@@ -320,25 +288,10 @@ func TryReadFull(r io.Reader, buf []byte) (n int, err error) {
 		nn, err = r.Read(buf[n:])
 		n += nn
 	}
-	fmt.Println("n:", n, "len buf", len(buf), "err:", err.Error())
 	if n == len(buf) && err == io.EOF {
-		// if n == len(buf) {
 		err = nil // EOF at the end is somewhat expected
-		fmt.Println("RRRRR FULLL1")
 	} else if err == io.EOF {
-		fmt.Println("RRRRR FULLL2")
 		err = errShortRead
 	}
 	return
-}
-
-func resize(in []byte, newSize int) []byte {
-	if in == nil {
-		return make([]byte, newSize)
-	}
-	if newSize <= cap(in) {
-		return in[:newSize]
-	}
-	toAdd := newSize - len(in)
-	return append(in, make([]byte, toAdd)...)
 }
