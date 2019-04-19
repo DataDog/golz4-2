@@ -246,9 +246,9 @@ func TestContinueCompress(t *testing.T) {
 }
 
 func TestStreamSimpleCompressionDecompression(t *testing.T) {
-	// inputs, _ := ioutil.ReadFile("sample.txt")
-	testCompressionDecompression(t, []byte("Hello world!.,.,."))
-	// testCompressionDecompression(t, inputs)
+	inputs, _ := ioutil.ReadFile("sample2.txt")
+	// testCompressionDecompression(t, []byte("Hello world!.,.,."))
+	testCompressionDecompression(t, inputs)
 }
 
 // func TestStreamEmptySlice(t *testing.T) {
