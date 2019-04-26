@@ -32,7 +32,7 @@ import (
 const (
 	// MaxInputSize is the max supported input size. see macro LZ4_MAX_INPUT_SIZE.
 	MaxInputSize       = 0x7E000000 // 2 113 929 216 bytes
-	RecommendBlockSize = 1024 * 8
+	streamingBlockSize = 1024 * 8
 )
 
 var errShortRead = errors.New("short read")
@@ -93,7 +93,7 @@ func Compress(out, in []byte) (outSize int, err error) {
 // Writer is an io.WriteCloser that lz4 compress its input.
 type Writer struct {
 	lz4Stream        *C.LZ4_stream_t
-	iptBuffer2D      [][]byte
+	iptBuffer2D      [2][]byte
 	inpBufIndex      int
 	dstBuffer        []byte
 	underlyingWriter io.Writer
@@ -103,14 +103,14 @@ type Writer struct {
 // the writer will be written in compressed form to w.
 func NewWriter(w io.Writer) *Writer {
 	// double buffer for input
-	iptBuffer2D := make([][]byte, 2)
-	for i := 0; i < 2; i++ {
-		iptBuffer2D[i] = make([]byte, RecommendBlockSize)
-	}
+	var iptBuffer2D [2][]byte
+	iptBuffer2D[0] = make([]byte, streamingBlockSize)
+	iptBuffer2D[1] = make([]byte, streamingBlockSize)
+
 	return &Writer{
 		lz4Stream:        C.LZ4_createStream(),
 		iptBuffer2D:      iptBuffer2D,
-		dstBuffer:        make([]byte, CompressBoundInt(RecommendBlockSize)),
+		dstBuffer:        make([]byte, CompressBoundInt(streamingBlockSize)),
 		underlyingWriter: w,
 	}
 
@@ -118,27 +118,16 @@ func NewWriter(w io.Writer) *Writer {
 
 // Write writes a compressed form of p to the underlying io.Writer.
 func (w *Writer) Write(p []byte) (int, error) {
-
 	if len(p) == 0 {
 		return 0, nil
 	}
 
-	// inpBufIndex := 0
-
-	// Check if dstBuffer is enough
-	if len(w.dstBuffer) < CompressBound(p) {
-		w.dstBuffer = make([]byte, CompressBound(p))
-	}
-	fmt.Println("len(p)", len(p), "CompressBound(p)", CompressBound(p))
-
-	offset := 0
-	compLenth := 0
-	C.LZ4_resetStream(w.lz4Stream)
-
-	cum := 0
+	var (
+		offset, compressLen, cum int
+	)
 
 	for {
-		// copy RecommendBlockSize of p to iptBuffer2D[inpBufIndex]
+		// copy streamingBlockSize of p to iptBuffer2D[inpBufIndex]
 		inpBytes := copy(w.iptBuffer2D[w.inpBufIndex], p[offset:])
 		if inpBytes == 0 {
 			break
@@ -171,16 +160,16 @@ func (w *Writer) Write(p []byte) (int, error) {
 			return 0, err
 		}
 
-		compLenth += written
+		compressLen += written
 		w.inpBufIndex = (w.inpBufIndex + 1) % 2
-		offset += RecommendBlockSize
+		offset += streamingBlockSize
 		if offset >= len(p) {
 			break
 
 		}
 	}
-	// C.LZ4_resetStream(w.lz4Stream)
-	return compLenth, nil
+
+	return compressLen, nil
 }
 
 // Close releases all the resources occupied by Writer.
@@ -213,12 +202,12 @@ func NewReader(r io.Reader) io.ReadCloser {
 	// double buffer
 	decompressionBuffer2D := make([][]byte, 2)
 	for i := 0; i < 2; i++ {
-		decompressionBuffer2D[i] = make([]byte, RecommendBlockSize)
+		decompressionBuffer2D[i] = make([]byte, streamingBlockSize)
 	}
 
 	return &reader{
 		lz4Stream:           C.LZ4_createStreamDecode(),
-		compressionBuffer:   make([]byte, RecommendBlockSize),
+		compressionBuffer:   make([]byte, streamingBlockSize),
 		decompressionBuffer: decompressionBuffer2D,
 		underlyingReader:    r,
 	}
