@@ -231,8 +231,8 @@ func (r *reader) Read(dst []byte) (int, error) {
 			return writeOffset, fmt.Errorf("invalid block size %d", blockSize)
 		}
 
-		// read len(src) from reader --> src
 		readBuffer := r.readBuffer[:blockSize]
+		// read blockSize from r.underlyingReader --> readBuffer
 		_, err = io.ReadFull(r.underlyingReader, readBuffer)
 		if err != nil {
 			return 0, err
@@ -245,8 +245,6 @@ func (r *reader) Read(dst []byte) (int, error) {
 			C.int(len(readBuffer)),
 			C.int(len(r.decompressedBuffer)),
 		))
-
-		// Keep src here eventhough, we reuse later, the code might be deleted at some point
 
 		if written <= 0 {
 			break
@@ -273,24 +271,6 @@ func (r *reader) readSize(rdr io.Reader) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return int(binary.LittleEndian.Uint32(r.sizeBuf)), nil
-}
 
-// TryReadFull reads buffer just as ReadFull does
-// Here we expect that buffer may end and we do not return ErrUnexpectedEOF as ReadAtLeast does.
-// We return errShortRead instead to distinguish short reads and failures.
-// We cannot use ReadFull/ReadAtLeast because it masks Reader errors, such as network failures
-// and causes panic instead of error.
-func TryReadFull(r io.Reader, buf []byte) (n int, err error) {
-	for n < len(buf) && err == nil {
-		var nn int
-		nn, err = r.Read(buf[n:])
-		n += nn
-	}
-	if n == len(buf) && err == io.EOF {
-		err = nil // EOF at the end is somewhat expected
-	} else if err == io.EOF {
-		err = errShortRead
-	}
-	return
+	return int(binary.LittleEndian.Uint32(r.sizeBuf)), nil
 }
