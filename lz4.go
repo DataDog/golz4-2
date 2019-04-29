@@ -22,17 +22,23 @@ static int LZ4_decompress_safe_continue_and_memcpy(
 import "C"
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"runtime"
 	"unsafe"
 )
 
 const (
 	// MaxInputSize is the max supported input size. see macro LZ4_MAX_INPUT_SIZE.
-	MaxInputSize       = 0x7E000000 // 2 113 929 216 bytes
-	streamingBlockSize = 1024 * 8
+	MaxInputSize = 0x7E000000 // 2 113 929 216 bytes
+
+	// if the streamingBlockSize is less than ~65K, then we need to keep
+	// previously decompressed blocks around at the same memory location
+	// that they were decompressed to.  This limits us to using a decompression
+	// buffer at least this size, so we might as well actually use this as
+	// the block size.
+	streamingBlockSize = 1024 * 96
 )
 
 var errShortRead = errors.New("short read")
@@ -93,8 +99,6 @@ func Compress(out, in []byte) (outSize int, err error) {
 // Writer is an io.WriteCloser that lz4 compress its input.
 type Writer struct {
 	lz4Stream        *C.LZ4_stream_t
-	iptBuffer2D      [2][]byte
-	inpBufIndex      int
 	dstBuffer        []byte
 	underlyingWriter io.Writer
 }
@@ -102,74 +106,65 @@ type Writer struct {
 // NewWriter creates a new Writer. Writes to
 // the writer will be written in compressed form to w.
 func NewWriter(w io.Writer) *Writer {
-	// double buffer for input
-	var iptBuffer2D [2][]byte
-	iptBuffer2D[0] = make([]byte, streamingBlockSize)
-	iptBuffer2D[1] = make([]byte, streamingBlockSize)
-
 	return &Writer{
 		lz4Stream:        C.LZ4_createStream(),
-		iptBuffer2D:      iptBuffer2D,
 		dstBuffer:        make([]byte, CompressBoundInt(streamingBlockSize)),
 		underlyingWriter: w,
 	}
 
 }
 
-// Write writes a compressed form of p to the underlying io.Writer.
-func (w *Writer) Write(p []byte) (int, error) {
-	if len(p) == 0 {
+// Write writes a compressed form of src to the underlying io.Writer.
+func (w *Writer) Write(src []byte) (int, error) {
+	if len(src) == 0 {
 		return 0, nil
 	}
 
 	var (
-		offset, compressLen, cum int
+		totalCompressedLen, cum int
 	)
 
-	for {
-		// copy streamingBlockSize of p to iptBuffer2D[inpBufIndex]
-		inpBytes := copy(w.iptBuffer2D[w.inpBufIndex], p[offset:])
-		if inpBytes == 0 {
-			break
-		}
-		cum += inpBytes
-		fmt.Println("inpBufIndex:", w.inpBufIndex, "inpBytes:", inpBytes, "cum:", cum)
+	b := batch(len(src), streamingBlockSize)
+	lenBuf := make([]byte, 4)
 
-		retCode := C.LZ4_compress_fast_continue(
+	for b.Next() {
+
+		inputBuf := src[b.Start:b.End]
+		inputBytes := len(inputBuf)
+		cum += inputBytes
+
+		compressedLen := C.LZ4_compress_fast_continue(
 			w.lz4Stream,
-			(*C.char)(unsafe.Pointer(&w.iptBuffer2D[w.inpBufIndex][0])),
+			(*C.char)(unsafe.Pointer(&inputBuf[0])),
 			(*C.char)(unsafe.Pointer(&w.dstBuffer[0])),
-			C.int(inpBytes),
+			C.int(inputBytes),
 			C.int(len(w.dstBuffer)),
 			1)
 
-		fmt.Println("retCode:", retCode)
-
-		if retCode <= 0 {
-			fmt.Println("break with inpBytes:", inpBytes, "retCode:", retCode)
+		if compressedLen <= 0 {
 			break
 		}
 
-		written := int(retCode)
-		// Write to underlying buffer
-		_, err := w.underlyingWriter.Write(w.dstBuffer[:written])
-
-		// Same behaviour as zlib, we can't know how much data we wrote, only
+		// treat errors w/ same behaviour as zlib, we can't know how much data we wrote, only
 		// if there was an error
+
+		// Write "header" to the buffer for decompression
+		binary.LittleEndian.PutUint32(lenBuf, uint32(compressedLen))
+		_, err := w.underlyingWriter.Write(lenBuf)
 		if err != nil {
 			return 0, err
 		}
 
-		compressLen += written
-		w.inpBufIndex = (w.inpBufIndex + 1) % 2
-		offset += streamingBlockSize
-		if offset >= len(p) {
-			break
-
+		// Write to underlying buffer
+		_, err = w.underlyingWriter.Write(w.dstBuffer[:compressedLen])
+		if err != nil {
+			return 0, err
 		}
+
+		totalCompressedLen += int(compressedLen)
 	}
 
-	return compressLen, nil
+	return totalCompressedLen, nil
 }
 
 // Close releases all the resources occupied by Writer.
@@ -184,14 +179,13 @@ func (w *Writer) Close() error {
 
 // reader is an io.ReadCloser that decompresses when read from.
 type reader struct {
-	lz4Stream           *C.LZ4_streamDecode_t
-	compressionBuffer   []byte
-	compressionLeft     int
-	decompressionBuffer [][]byte
-	decompOff           int
-	decompSize          int
-	decBufIndex         int
-	underlyingReader    io.Reader
+	lz4Stream          *C.LZ4_streamDecode_t
+	readBuffer         []byte
+	sizeBuf            []byte
+	decompressedBuffer []byte
+	decompOffset       int
+	decompSize         int
+	underlyingReader   io.Reader
 }
 
 // NewReader creates a new io.ReadCloser.  Reads from the returned ReadCloser
@@ -199,17 +193,12 @@ type reader struct {
 // Close on the ReadCloser when done.  If this is not done, underlying objects
 // in the lz4 library will not be freed.
 func NewReader(r io.Reader) io.ReadCloser {
-	// double buffer
-	decompressionBuffer2D := make([][]byte, 2)
-	for i := 0; i < 2; i++ {
-		decompressionBuffer2D[i] = make([]byte, streamingBlockSize)
-	}
-
 	return &reader{
-		lz4Stream:           C.LZ4_createStreamDecode(),
-		compressionBuffer:   make([]byte, streamingBlockSize),
-		decompressionBuffer: decompressionBuffer2D,
-		underlyingReader:    r,
+		lz4Stream:          C.LZ4_createStreamDecode(),
+		readBuffer:         make([]byte, CompressBoundInt(streamingBlockSize)),
+		sizeBuf:            make([]byte, 4),
+		decompressedBuffer: make([]byte, streamingBlockSize),
+		underlyingReader:   r,
 	}
 }
 
@@ -225,56 +214,66 @@ func (r *reader) Close() error {
 
 // Read decompresses `compressionBuffer` into `dst`.
 func (r *reader) Read(dst []byte) (int, error) {
-	r.decBufIndex = 0
-	got := 0
+	writeOffset := 0
 
 	C.LZ4_setStreamDecode(r.lz4Stream, nil, 0)
 
 	for {
 		// Populate src
-		src := r.compressionBuffer
-		reader := r.underlyingReader
-		//read len(src) from reader --> src
-		n, err := TryReadFull(reader, src[r.compressionLeft:])
-		// fmt.Println("src:", string(src), "n:", n, "err:", err.Error())
-		if err != nil && err != errShortRead { // Handle underlying reader errors first
-			return 0, fmt.Errorf("failed to read from underlying reader: %s", err)
-		} else if n == 0 && r.compressionLeft == 0 {
-			return got, io.EOF
+		blockSize, err := r.readSize(r.underlyingReader)
+		if err != nil {
+			return writeOffset, err
 		}
 
-		src = src[:r.compressionLeft+n]
+		// if the blockSize is bigger than our configured one, then something
+		// is wrong with the file or it was compressed with a different mechanism
+		if blockSize > len(r.readBuffer) {
+			return writeOffset, fmt.Errorf("invalid block size %d", blockSize)
+		}
 
-		// fmt.Println("src now:", string(src))
+		// read len(src) from reader --> src
+		readBuffer := r.readBuffer[:blockSize]
+		_, err = io.ReadFull(r.underlyingReader, readBuffer)
+		if err != nil {
+			return 0, err
+		}
 
-		// C code
-		cSrcSize := C.int(len(src))
-		cDstSize := C.int(len(r.decompressionBuffer[r.decBufIndex]))
-
-		retCode := C.LZ4_decompress_safe_continue(
+		written := int(C.LZ4_decompress_safe_continue(
 			r.lz4Stream,
-			(*C.char)(unsafe.Pointer(&src[0])),
-			(*C.char)(unsafe.Pointer(&r.decompressionBuffer[r.decBufIndex][0])),
-			cSrcSize,
-			cDstSize)
+			(*C.char)(unsafe.Pointer(&readBuffer[0])),
+			(*C.char)(unsafe.Pointer(&r.decompressedBuffer[0])),
+			C.int(len(readBuffer)),
+			C.int(len(r.decompressedBuffer)),
+		))
 
 		// Keep src here eventhough, we reuse later, the code might be deleted at some point
-		runtime.KeepAlive(src)
-		if retCode <= 0 {
-			fmt.Println("BREAK, got is", got, ";dst", string(dst), "retcode", retCode)
+
+		if written <= 0 {
 			break
 		}
-		r.compressionLeft = len(src) - int(cSrcSize)
-		// r.decompSize = int(cDstSize)
-		r.decompOff = copy(dst[got:], r.decompressionBuffer[r.decBufIndex])
-		got += r.decompOff
 
-		r.decBufIndex = (r.decBufIndex + 1) % 2
+		copied := copy(dst[writeOffset:], r.decompressedBuffer[:written])
 
+		switch {
+		case copied < len(r.decompressedBuffer):
+			r.decompOffset += copied
+			return len(dst), nil
+		case copied == len(r.decompressedBuffer):
+			r.decompOffset = 0
+		}
+		writeOffset += copied
 	}
 
-	return got, nil
+	return writeOffset, nil
+}
 
+// read the 4-byte little endian size from the head of each stream compressed block
+func (r *reader) readSize(rdr io.Reader) (int, error) {
+	_, err := rdr.Read(r.sizeBuf)
+	if err != nil {
+		return 0, err
+	}
+	return int(binary.LittleEndian.Uint32(r.sizeBuf)), nil
 }
 
 // TryReadFull reads buffer just as ReadFull does

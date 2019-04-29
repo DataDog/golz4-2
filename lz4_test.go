@@ -7,7 +7,6 @@ package lz4
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"runtime/debug"
@@ -247,8 +246,12 @@ func TestContinueCompress(t *testing.T) {
 
 func TestStreamSimpleCompressionDecompression(t *testing.T) {
 	inputs, _ := ioutil.ReadFile("sample2.txt")
+	var bigInput []byte
+	for i := 0; i < 20; i++ {
+		bigInput = append(bigInput, inputs...)
+	}
 	// testCompressionDecompression(t, []byte("Hello world!.,.,."))
-	testCompressionDecompression(t, inputs)
+	testCompressionDecompression(t, bigInput)
 }
 
 // func TestStreamEmptySlice(t *testing.T) {
@@ -266,19 +269,15 @@ func testCompressionDecompression(t *testing.T, payload []byte) {
 	failOnError(t, "Failed compressing", err)
 	rr := bytes.NewReader(out)
 	// Check that we can decompress with Uncompress()
-	decompressed := make([]byte, len(payload))
 	out = out[:n]
-	_, err = Uncompress(decompressed, out)
-	failOnError(t, "Failed to decompress with Decompress()", err)
-	if string(payload) != string(decompressed) {
-		fmt.Println("string(payload)", string(payload), "string(decompressed)", string(decompressed))
-		t.Fatalf("Payload did not match, lengths: %v & %v", len(payload), len(decompressed))
-	}
 
 	// Decompress
 	r := NewReader(rr)
 	dst := make([]byte, len(payload))
 	n, err = r.Read(dst)
+	if err != nil {
+		t.Fatal("error reading", err)
+	}
 	// if err != nil {
 	// 	failOnError(t, "Failed to read for decompression", err)
 	// }
