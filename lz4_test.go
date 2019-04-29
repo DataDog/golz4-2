@@ -6,13 +6,24 @@
 package lz4
 
 import (
+	"bytes"
+	"io"
 	"io/ioutil"
-	"strings"
+	"runtime/debug"
 	"testing"
 	"testing/quick"
 )
 
 const corpusSize = 4746
+
+var plaintext0 = []byte("jkoedasdcnegzb.,ewqegmovobspjikodecedegds[]")
+
+func failOnError(t *testing.T, msg string, err error) {
+	if err != nil {
+		debug.PrintStack()
+		t.Fatalf("%s: %s", msg, err)
+	}
+}
 
 func TestCompressionRatio(t *testing.T) {
 	input, err := ioutil.ReadFile("sample.txt")
@@ -31,7 +42,8 @@ func TestCompressionRatio(t *testing.T) {
 }
 
 func TestCompression(t *testing.T) {
-	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
+	// input := []byte(strings.Repeat("Hello world, this is quite something", 10))
+	input, _ := ioutil.ReadFile("sample2.txt")
 	output := make([]byte, CompressBound(input))
 	outSize, err := Compress(output, input)
 	if err != nil {
@@ -40,6 +52,8 @@ func TestCompression(t *testing.T) {
 	if outSize == 0 {
 		t.Fatal("Output buffer is empty.")
 	}
+	t.Logf("Compressed %v -> %v bytes", len(input), outSize)
+
 	output = output[:outSize]
 	decompressed := make([]byte, len(input))
 	_, err = Uncompress(decompressed, output)
@@ -94,7 +108,8 @@ func TestNoCompression(t *testing.T) {
 }
 
 func TestCompressionError(t *testing.T) {
-	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
+	input, _ := ioutil.ReadFile("sample2.txt")
+	// input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	output := make([]byte, 1)
 	_, err := Compress(output, input)
 	if err == nil {
@@ -109,7 +124,9 @@ func TestCompressionError(t *testing.T) {
 }
 
 func TestDecompressionError(t *testing.T) {
-	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
+	// input := []byte(strings.Repeat("Hello world, this is quite something", 10000))
+	input, _ := ioutil.ReadFile("sample2.txt")
+
 	output := make([]byte, CompressBound(input))
 	outSize, err := Compress(output, input)
 	if err != nil {
@@ -191,4 +208,213 @@ func TestFuzz(t *testing.T) {
 	if err := quick.Check(f, conf); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestContinueCompress(t *testing.T) {
+	payload := []byte("Hello World!")
+	repeat := 100
+
+	var intermediate bytes.Buffer
+	w := NewWriter(&intermediate)
+	for i := 0; i < repeat; i++ {
+		_, err := w.Write(payload)
+		failOnError(t, "Failed writing to compress object", err)
+	}
+	w.Close()
+
+	// Decompress
+	r := NewReader(&intermediate)
+	dst := make([]byte, len(payload))
+	for i := 0; i < repeat; i++ {
+		n, err := r.Read(dst)
+		failOnError(t, "Failed to decompress", err)
+		if n != len(payload) {
+			t.Fatalf("Did not read enough bytes: %v != %v", n, len(payload))
+		}
+		if string(dst) != string(payload) {
+			t.Fatalf("Did not read the same %s != %s", string(dst), string(payload))
+		}
+	}
+	// Check EOF
+	n, err := r.Read(dst)
+	if err != io.EOF {
+		t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
+	}
+	failOnError(t, "Failed to close decompress object", r.Close())
+
+}
+
+func TestStreamSimpleCompressionDecompression(t *testing.T) {
+	inputs, _ := ioutil.ReadFile("sample2.txt")
+	var bigInput []byte
+	for i := 0; i < 20; i++ {
+		bigInput = append(bigInput, inputs...)
+	}
+	testCompressionDecompression(t, bigInput)
+}
+
+func testCompressionDecompression(t *testing.T, payload []byte) {
+	var w bytes.Buffer
+	writer := NewWriter(&w)
+	n, err := writer.Write(payload)
+	failOnError(t, "Failed writing to compress object", err)
+	failOnError(t, "Failed to close compress object", writer.Close())
+	out := w.Bytes()
+	t.Logf("Compressed %v -> %v bytes", len(payload), len(out))
+	failOnError(t, "Failed compressing", err)
+	rr := bytes.NewReader(out)
+	// Check that we can decompress with Uncompress()
+	out = out[:n]
+
+	// Decompress
+	r := NewReader(rr)
+	dst := make([]byte, len(payload))
+	n, err = r.Read(dst)
+	if err != nil {
+		t.Fatal("error reading", err)
+	}
+
+	dst = dst[:n]
+	if string(payload) != string(dst) { // Only print if we can print
+		if len(payload) < 100 && len(dst) < 100 {
+			t.Fatalf("Cannot compress and decompress: %s != %s", payload, dst)
+		} else {
+			t.Fatalf("Cannot compress and decompress (lengths: %v bytes & %v bytes)", len(payload), len(dst))
+		}
+	}
+	// Check EOF
+	n, err = r.Read(dst)
+	if err != io.EOF && len(dst) > 0 { // If we want 0 bytes, that should work
+		t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
+	}
+	failOnError(t, "Failed to close decompress object", r.Close())
+}
+
+func TestStreamingFuzz(t *testing.T) {
+	f := func(input []byte) bool {
+		var w bytes.Buffer
+		writer := NewWriter(&w)
+		n, err := writer.Write(input)
+		failOnError(t, "Failed writing to compress object", err)
+		failOnError(t, "Failed to close compress object", writer.Close())
+		out := w.Bytes()
+		failOnError(t, "Failed compressing", err)
+		rr := bytes.NewReader(out)
+		// Check that we can decompress with Uncompress()
+		out = out[:n]
+
+		// Decompress
+		r := NewReader(rr)
+		dst := make([]byte, len(input))
+		n, err = r.Read(dst)
+
+		if len(dst) == 0 && err != nil {
+			// skip this case for empty input
+		} else if err != nil {
+			t.Fatal("error reading", err)
+		}
+
+		dst = dst[:n]
+		if string(input) != string(dst) { // Only print if we can print
+			if len(input) < 100 && len(dst) < 100 {
+				t.Fatalf("Cannot compress and decompress: %s != %s", input, dst)
+			} else {
+				t.Fatalf("Cannot compress and decompress (lengths: %v bytes & %v bytes)", len(input), len(dst))
+			}
+		}
+		// Check EOF
+		n, err = r.Read(dst)
+		if err != io.EOF && len(dst) > 0 { // If we want 0 bytes, that should work
+			t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
+		}
+		failOnError(t, "Failed to close decompress object", r.Close())
+		return true
+	}
+
+	conf := &quick.Config{MaxCount: 20000}
+	if testing.Short() {
+		conf.MaxCount = 1000
+	}
+	if err := quick.Check(f, conf); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func BenchmarkCompress(b *testing.B) {
+	b.ReportAllocs()
+	dst := make([]byte, CompressBound(plaintext0))
+	b.SetBytes(int64(len(plaintext0)))
+	for i := 0; i < b.N; i++ {
+		_, err := Compress(dst, plaintext0)
+		if err != nil {
+			b.Errorf("Compress error: %v", err)
+		}
+	}
+}
+
+func BenchmarkStreamCompress(b *testing.B) {
+	b.ReportAllocs()
+	var intermediate bytes.Buffer
+	w := NewWriter(&intermediate)
+	defer w.Close()
+	b.SetBytes(int64(len(plaintext0)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := w.Write(plaintext0)
+		if err != nil {
+			b.Fatalf("Failed writing to compress object: %s", err)
+		}
+		// Prevent from unbound buffer growth.
+		intermediate.Reset()
+	}
+
+}
+
+func BenchmarkCompressUncompress(b *testing.B) {
+	b.ReportAllocs()
+	compressed := make([]byte, CompressBound(plaintext0))
+	n, err := Compress(compressed, plaintext0)
+	if err != nil {
+		b.Errorf("Compress error: %v", err)
+	}
+	compressed = compressed[:n]
+
+	dst := make([]byte, len(plaintext0))
+	b.SetBytes(int64(len(plaintext0)))
+	for i := 0; i < b.N; i++ {
+		_, err := Uncompress(dst, compressed)
+		if err != nil {
+			b.Errorf("Uncompress error: %v", err)
+		}
+	}
+}
+
+func BenchmarkStreamUncompress(b *testing.B) {
+	b.ReportAllocs()
+	var err error
+	var n int
+
+	compressed := make([]byte, CompressBound(plaintext0))
+	n, err = Compress(compressed, plaintext0)
+	if err != nil {
+		b.Errorf("Compress error: %v", err)
+	}
+	compressed = compressed[:n]
+
+	dst := make([]byte, len(plaintext0))
+	b.SetBytes(int64(len(plaintext0)))
+
+	b.ResetTimer()
+
+	b.SetBytes(int64(len(plaintext0)))
+	for i := 0; i < b.N; i++ {
+		rr := bytes.NewReader(compressed)
+		r := NewReader(rr)
+		r.Read(dst)
+		if err != nil {
+			b.Fatalf("Failed to decompress: %s", err)
+		}
+
+	}
+
 }
