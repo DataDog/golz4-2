@@ -257,12 +257,7 @@ func TestStreamSimpleCompressionDecompression(t *testing.T) {
 }
 
 func TestFileStreamSimpleCompressionDecompression(t *testing.T) {
-	inputs, _ := ioutil.ReadFile("sample2.txt")
-
-	var bigInput []byte
-	for i := 0; i < 200; i++ {
-		bigInput = append(bigInput, inputs...)
-	}
+	inputs, _ := ioutil.ReadFile("1557135000.idb")
 
 	testFileCompressionDecompression(t, inputs)
 }
@@ -349,7 +344,6 @@ func testFileCompressionDecompression(t *testing.T, payload []byte) {
 	r := NewReader(fi)
 
 	dst := make([]byte, len(payload))
-	fmt.Println("length of payload:", len(payload))
 	n, err = r.Read(dst)
 	if err != nil {
 		t.Fatal("error reading", err)
