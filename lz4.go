@@ -145,9 +145,6 @@ func (w *Writer) Write(src []byte) (int, error) {
 			break
 		}
 
-		// treat errors w/ same behaviour as zlib, we can't know how much data we wrote, only
-		// if there was an error
-
 		// Write "header" to the buffer for decompression
 		binary.LittleEndian.PutUint32(lenBuf, uint32(compressedLen))
 		_, err := w.underlyingWriter.Write(lenBuf)
@@ -182,9 +179,10 @@ type reader struct {
 	lz4Stream          *C.LZ4_streamDecode_t
 	readBuffer         []byte
 	sizeBuf            []byte
-	decompressedBuffer []byte
+	decompressedBuffer [2][]byte
 	decompOffset       int
 	decompSize         int
+	decBufIndex        int
 	underlyingReader   io.Reader
 }
 
@@ -193,11 +191,14 @@ type reader struct {
 // Close on the ReadCloser when done.  If this is not done, underlying objects
 // in the lz4 library will not be freed.
 func NewReader(r io.Reader) io.ReadCloser {
+	var decompressedBuffer2D [2][]byte
+	decompressedBuffer2D[0] = make([]byte, streamingBlockSize)
+	decompressedBuffer2D[1] = make([]byte, streamingBlockSize)
 	return &reader{
 		lz4Stream:          C.LZ4_createStreamDecode(),
 		readBuffer:         make([]byte, CompressBoundInt(streamingBlockSize)),
 		sizeBuf:            make([]byte, 4),
-		decompressedBuffer: make([]byte, streamingBlockSize),
+		decompressedBuffer: decompressedBuffer2D,
 		underlyingReader:   r,
 	}
 }
@@ -216,7 +217,23 @@ func (r *reader) Close() error {
 func (r *reader) Read(dst []byte) (int, error) {
 	writeOffset := 0
 
-	C.LZ4_setStreamDecode(r.lz4Stream, nil, 0)
+	// XXXX: we don't need to call LZ4_setStreamDecode, when the previous data is still available in memory
+	// C.LZ4_setStreamDecode(r.lz4Stream, nil, 0)
+	// we have leftover decompressed data from previous call
+	if r.decompOffset > 0 {
+		copied := copy(dst[writeOffset:], r.decompressedBuffer[r.decBufIndex][r.decompOffset:])
+		if len(dst) == copied {
+			r.decompOffset += copied
+			if r.decompOffset == len(r.decompressedBuffer[r.decBufIndex]) {
+				r.decompOffset = 0
+				r.decBufIndex = (r.decBufIndex + 1) % 2
+			}
+			return len(dst), nil
+		}
+		r.decompOffset = 0
+		r.decBufIndex = (r.decBufIndex + 1) % 2
+		writeOffset += copied
+	}
 
 	for {
 		// Populate src
@@ -241,23 +258,26 @@ func (r *reader) Read(dst []byte) (int, error) {
 		written := int(C.LZ4_decompress_safe_continue(
 			r.lz4Stream,
 			(*C.char)(unsafe.Pointer(&readBuffer[0])),
-			(*C.char)(unsafe.Pointer(&r.decompressedBuffer[0])),
+			(*C.char)(unsafe.Pointer(&r.decompressedBuffer[r.decBufIndex][0])),
 			C.int(len(readBuffer)),
-			C.int(len(r.decompressedBuffer)),
+			C.int(len(r.decompressedBuffer[r.decBufIndex])),
 		))
 
 		if written <= 0 {
 			break
 		}
 
-		copied := copy(dst[writeOffset:], r.decompressedBuffer[:written])
+		copied := copy(dst[writeOffset:], r.decompressedBuffer[r.decBufIndex][:written])
 
 		switch {
-		case copied < len(r.decompressedBuffer):
+		// have some leftover data from the decompressedBuffer
+		case copied+r.decompOffset < len(r.decompressedBuffer[r.decBufIndex][:written]):
 			r.decompOffset += copied
 			return len(dst), nil
-		case copied == len(r.decompressedBuffer):
+		// have copied all from the decompressedBuffer
+		case copied+r.decompOffset == len(r.decompressedBuffer[r.decBufIndex][:written]):
 			r.decompOffset = 0
+			r.decBufIndex = (r.decBufIndex + 1) % 2
 		}
 		writeOffset += copied
 	}
