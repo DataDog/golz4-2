@@ -217,30 +217,23 @@ func (r *reader) Close() error {
 func (r *reader) Read(dst []byte) (int, error) {
 	writeOffset := 0
 
+	// XXXX: we don't need to call LZ4_setStreamDecode, when the previous data is still available in memory
 	// C.LZ4_setStreamDecode(r.lz4Stream, nil, 0)
-	// fmt.Println("///////////////len(dst):", len(dst), "decompoffset", r.decompOffset, "decompBufindex:", r.decBufIndex)
-
 	// we have leftover decompressed data from previous call
 	if r.decompOffset > 0 {
 		copied := copy(dst[writeOffset:], r.decompressedBuffer[r.decBufIndex][r.decompOffset:])
-		// fmt.Println("length of", copied, "leftover decompressed data copied:")
 		if len(dst) == copied {
-			// fmt.Println("dst buffer is filled with leftover decompressed data")
 			r.decompOffset += copied
 			if r.decompOffset == len(r.decompressedBuffer[r.decBufIndex]) {
-				// fmt.Println("Reset decompOffset")
 				r.decompOffset = 0
 				r.decBufIndex = (r.decBufIndex + 1) % 2
 			}
-			// fmt.Println("//////////////////////////////return2, len dest is:", len(dst))
 			return len(dst), nil
 		}
 		r.decompOffset = 0
 		r.decBufIndex = (r.decBufIndex + 1) % 2
 		writeOffset += copied
 	}
-
-	// fmt.Println("Continue to decompress, writeOffset is:", writeOffset)
 
 	for {
 		// Populate src
@@ -270,20 +263,16 @@ func (r *reader) Read(dst []byte) (int, error) {
 			C.int(len(r.decompressedBuffer[r.decBufIndex])),
 		))
 
-		// fmt.Println("len(readBuffer)", len(readBuffer), "len(r.decompressedBuffer)", len(r.decompressedBuffer[r.decBufIndex]), "written:", written)
-
 		if written <= 0 {
 			break
 		}
 
 		copied := copy(dst[writeOffset:], r.decompressedBuffer[r.decBufIndex][:written])
-		// fmt.Println("cumed written:", r.writtenCum, "coppied", copied, "writeOffsite", writeOffset)
 
 		switch {
 		// have some leftover data from the decompressedBuffer
 		case copied+r.decompOffset < len(r.decompressedBuffer[r.decBufIndex][:written]):
 			r.decompOffset += copied
-			// fmt.Println("//////////////////////////////return1, len dst is:", len(dst))
 			return len(dst), nil
 		// have copied all from the decompressedBuffer
 		case copied+r.decompOffset == len(r.decompressedBuffer[r.decBufIndex][:written]):
@@ -293,7 +282,6 @@ func (r *reader) Read(dst []byte) (int, error) {
 		writeOffset += copied
 	}
 
-	// fmt.Println("//////////////////////////////return3, writeoffset is:", writeOffset)
 	return writeOffset, nil
 }
 
