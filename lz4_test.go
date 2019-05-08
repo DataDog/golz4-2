@@ -270,22 +270,21 @@ func TestIOCopyStreamSimpleCompressionDecompression(t *testing.T) {
 }
 
 func testIOCopyCompressionDecompression(t *testing.T, payload []byte, filename string) {
-	var w bytes.Buffer
 	fname := filename + ".lz4"
-	writer := NewWriter(&w)
-	_, err := writer.Write(payload)
-	failOnError(t, "Failed writing to compress object", err)
-	failOnError(t, "Failed to close compress object", writer.Close())
-	out := w.Bytes()
-	t.Logf("Compressed %v -> %v bytes", len(payload), len(out))
-	failOnError(t, "Failed compressing", err)
-
 	file, err := os.Create(fname)
 	failOnError(t, "Failed creating to file", err)
-	defer file.Close()
-	// write to file
-	_, err = file.Write(out)
-	failOnError(t, "Failed writing to file", err)
+	// defer file.Close()
+
+	writer := NewWriter(file)
+	_, err = writer.Write(payload)
+	failOnError(t, "Failed writing to compress object", err)
+	failOnError(t, "Failed to close compress object", writer.Close())
+	stat, err := os.Stat(fname)
+	failOnError(t, "Cannot open file", err)
+
+	t.Logf("Compressed %v -> %v bytes", len(payload), stat.Size())
+
+	file.Close()
 
 	// read from the file
 	fi, err := os.Open(fname)
@@ -300,7 +299,7 @@ func testIOCopyCompressionDecompression(t *testing.T, payload []byte, filename s
 	defer fileNew.Close()
 
 	// Decompress with streaming API
-	r := ioutil.NopCloser(NewReader(fi))
+	r := NewReader(fi)
 
 	copied, err := io.Copy(fileNew, r)
 	failOnError(t, "Failed writing to file", err)

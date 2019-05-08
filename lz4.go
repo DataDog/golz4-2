@@ -145,9 +145,6 @@ func (w *Writer) Write(src []byte) (int, error) {
 			break
 		}
 
-		// treat errors w/ same behaviour as zlib, we can't know how much data we wrote, only
-		// if there was an error
-
 		// Write "header" to the buffer for decompression
 		binary.LittleEndian.PutUint32(lenBuf, uint32(compressedLen))
 		_, err := w.underlyingWriter.Write(lenBuf)
@@ -182,10 +179,13 @@ type reader struct {
 	lz4Stream          *C.LZ4_streamDecode_t
 	readBuffer         []byte
 	sizeBuf            []byte
-	decompressedBuffer []byte
+	decompressedBuffer [2][]byte
 	decompOffset       int
 	decompSize         int
+	decBufIndex        int
 	underlyingReader   io.Reader
+	cum                int
+	numBlock           int
 }
 
 // NewReader creates a new io.ReadCloser.  Reads from the returned ReadCloser
@@ -193,11 +193,14 @@ type reader struct {
 // Close on the ReadCloser when done.  If this is not done, underlying objects
 // in the lz4 library will not be freed.
 func NewReader(r io.Reader) io.ReadCloser {
+	var decompressedBuffer2D [2][]byte
+	decompressedBuffer2D[0] = make([]byte, streamingBlockSize)
+	decompressedBuffer2D[1] = make([]byte, streamingBlockSize)
 	return &reader{
 		lz4Stream:          C.LZ4_createStreamDecode(),
 		readBuffer:         make([]byte, CompressBoundInt(streamingBlockSize)),
 		sizeBuf:            make([]byte, 4),
-		decompressedBuffer: make([]byte, streamingBlockSize),
+		decompressedBuffer: decompressedBuffer2D,
 		underlyingReader:   r,
 	}
 }
@@ -216,12 +219,39 @@ func (r *reader) Close() error {
 func (r *reader) Read(dst []byte) (int, error) {
 	writeOffset := 0
 
-	C.LZ4_setStreamDecode(r.lz4Stream, nil, 0)
+	// C.LZ4_setStreamDecode(r.lz4Stream, nil, 0)
+	fmt.Println("///////////////len(dst):", len(dst), "decompoffset", r.decompOffset, "decompBufindex:", r.decBufIndex)
+
+	// we have leftover decompressed data from previous call
+	if r.decompOffset > 0 {
+		copied := copy(dst[writeOffset:], r.decompressedBuffer[r.decBufIndex][r.decompOffset:])
+		fmt.Println("length of", copied, "leftover decompressed data copied:")
+		if len(dst) == copied {
+			fmt.Println("dst buffer is filled with leftover decompressed data")
+			r.decompOffset += copied
+			if r.decompOffset == len(r.decompressedBuffer[r.decBufIndex]) {
+				fmt.Println("Reset decompOffset")
+				r.decompOffset = 0
+				r.decBufIndex = (r.decBufIndex + 1) % 2
+			}
+			fmt.Println("//////////////////////////////return2, len dest is:", len(dst))
+			return len(dst), nil
+		}
+		r.decompOffset = 0
+		r.decBufIndex = (r.decBufIndex + 1) % 2
+		writeOffset += copied
+	}
+
+	fmt.Println("Continue to decompress, writeOffset is:", writeOffset)
 
 	for {
 		// Populate src
 		blockSize, err := r.readSize(r.underlyingReader)
+		r.cum += blockSize
+		r.numBlock += 1
+		fmt.Println("cum:", r.cum, "numBlock", r.numBlock)
 		if err != nil {
+			fmt.Println("err:", err.Error())
 			return writeOffset, err
 		}
 
@@ -241,27 +271,34 @@ func (r *reader) Read(dst []byte) (int, error) {
 		written := int(C.LZ4_decompress_safe_continue(
 			r.lz4Stream,
 			(*C.char)(unsafe.Pointer(&readBuffer[0])),
-			(*C.char)(unsafe.Pointer(&r.decompressedBuffer[0])),
+			(*C.char)(unsafe.Pointer(&r.decompressedBuffer[r.decBufIndex][0])),
 			C.int(len(readBuffer)),
-			C.int(len(r.decompressedBuffer)),
+			C.int(len(r.decompressedBuffer[r.decBufIndex])),
 		))
+
+		fmt.Println("len(readBuffer)", len(readBuffer), "len(r.decompressedBuffer)", len(r.decompressedBuffer[r.decBufIndex]), "written:", written)
 
 		if written <= 0 {
 			break
 		}
 
-		copied := copy(dst[writeOffset:], r.decompressedBuffer[:written])
+		copied := copy(dst[writeOffset:], r.decompressedBuffer[r.decBufIndex][:written])
 
 		switch {
-		case copied < len(r.decompressedBuffer):
+		// have some leftover data from the decompressedBuffer
+		case copied+r.decompOffset < len(r.decompressedBuffer[r.decBufIndex]):
 			r.decompOffset += copied
+			fmt.Println("//////////////////////////////return1, len dst is:", len(dst))
 			return len(dst), nil
-		case copied == len(r.decompressedBuffer):
+		// have copied all from the decompressedBuffer
+		case copied+r.decompOffset == len(r.decompressedBuffer[r.decBufIndex]):
 			r.decompOffset = 0
+			r.decBufIndex = (r.decBufIndex + 1) % 2
 		}
 		writeOffset += copied
 	}
 
+	fmt.Println("//////////////////////////////return3, writeoffset is:", writeOffset)
 	return writeOffset, nil
 }
 
