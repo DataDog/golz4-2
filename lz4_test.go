@@ -7,7 +7,6 @@ package lz4
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -273,7 +272,6 @@ func testIOCopyCompressionDecompression(t *testing.T, payload []byte, filename s
 	fname := filename + ".lz4"
 	file, err := os.Create(fname)
 	failOnError(t, "Failed creating to file", err)
-	// defer file.Close()
 
 	writer := NewWriter(file)
 	_, err = writer.Write(payload)
@@ -301,15 +299,25 @@ func testIOCopyCompressionDecompression(t *testing.T, payload []byte, filename s
 	// Decompress with streaming API
 	r := NewReader(fi)
 
-	copied, err := io.Copy(fileNew, r)
+	_, err = io.Copy(fileNew, r)
 	failOnError(t, "Failed writing to file", err)
-	fmt.Println("io Copied length is:", copied)
 
 	fileOriginstats, err := os.Stat(filename)
 	fiNewStats, err := fileNew.Stat()
 	if fileOriginstats.Size() != fiNewStats.Size() {
 		t.Fatalf("Not same size files: %d != %d", fileOriginstats.Size(), fiNewStats.Size())
 
+	}
+
+	// just a check to make sure the file contents are the same
+	f1, err := ioutil.ReadFile(filename)
+	failOnError(t, "Failed reading to file", err)
+
+	f2, err := ioutil.ReadFile(fnameNew)
+	failOnError(t, "Failed reading to file", err)
+
+	if !bytes.Equal(f1, f2) {
+		t.Fatalf("Cannot compressed file and original is not the same: %s != %s", filename, fnameNew)
 	}
 
 	failOnError(t, "Failed to close decompress object", r.Close())
