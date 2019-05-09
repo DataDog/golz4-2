@@ -211,12 +211,49 @@ func TestFuzz(t *testing.T) {
 	}
 }
 
+func TestSimpleCompressDecompress(t *testing.T) {
+	data := []byte("this\nis\njust\na\ntestttttttttt.")
+	w := bytes.NewBuffer(nil)
+	wc := NewWriter(w)
+	defer wc.Close()
+	_, err := wc.Write(data)
+
+	// Decompress
+	bufOut := bytes.NewBuffer(nil)
+	r := NewReader(w)
+	_, err = io.Copy(bufOut, r)
+	failOnError(t, "Failed writing to file", err)
+
+	if bufOut.String() != string(data) {
+		t.Fatalf("Decompressed output != input: %q != %q", bufOut.String(), data)
+	}
+}
+
 func TestIOCopyStreamSimpleCompressionDecompression(t *testing.T) {
-	// filename := "1557135000.idb"
 	filename := "sample2.txt"
 	inputs, _ := ioutil.ReadFile(filename)
 
 	testIOCopyCompressionDecompression(t, inputs, filename)
+}
+
+func TestIOCopyDecompression(t *testing.T) {
+	filename := "1557342000.idb.lz4"
+	// read from the file
+	fi, err := os.Open(filename)
+	failOnError(t, "Failed open file", err)
+	defer fi.Close()
+
+	// decompress into this new file
+	fnameNew := "1557342000.idb"
+	fileNew, err := os.Create(fnameNew)
+	failOnError(t, "Failed writing to file", err)
+	defer fileNew.Close()
+
+	// Decompress with streaming API
+	r := NewReader(fi)
+	_, err = io.Copy(fileNew, r)
+	failOnError(t, "Failed writing to file", err)
+
 }
 
 func testIOCopyCompressionDecompression(t *testing.T, payload []byte, filename string) {
