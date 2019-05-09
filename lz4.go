@@ -245,7 +245,7 @@ func (r *reader) Read(dst []byte) (int, error) {
 		// if the blockSize is bigger than our configured one, then something
 		// is wrong with the file or it was compressed with a different mechanism
 		if blockSize > len(r.readBuffer) {
-			return writeOffset, fmt.Errorf("invalid block size %d", blockSize)
+			return writeOffset, fmt.Errorf("invalid block size Version2%d", blockSize)
 		}
 
 		readBuffer := r.readBuffer[:blockSize]
