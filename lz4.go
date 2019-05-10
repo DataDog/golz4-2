@@ -101,6 +101,7 @@ type Writer struct {
 	lz4Stream        *C.LZ4_stream_t
 	dstBuffer        []byte
 	underlyingWriter io.Writer
+	count            int
 }
 
 // NewWriter creates a new Writer. Writes to
@@ -116,6 +117,7 @@ func NewWriter(w io.Writer) *Writer {
 
 // Write writes a compressed form of src to the underlying io.Writer.
 func (w *Writer) Write(src []byte) (int, error) {
+	w.count += 1
 	if len(src) == 0 {
 		return 0, nil
 	}
@@ -215,6 +217,9 @@ func (r *reader) Close() error {
 
 // Read decompresses `compressionBuffer` into `dst`.
 func (r *reader) Read(dst []byte) (int, error) {
+	if len(dst) == 0 || dst == nil {
+		return 0, nil
+	}
 	writeOffset := 0
 
 	// XXXX: we don't need to call LZ4_setStreamDecode, when the previous data is still available in memory
@@ -245,7 +250,7 @@ func (r *reader) Read(dst []byte) (int, error) {
 		// if the blockSize is bigger than our configured one, then something
 		// is wrong with the file or it was compressed with a different mechanism
 		if blockSize > len(r.readBuffer) {
-			return writeOffset, fmt.Errorf("invalid block size Version2%d", blockSize)
+			return writeOffset, fmt.Errorf("invalid block size (Version3)%d", blockSize)
 		}
 
 		readBuffer := r.readBuffer[:blockSize]
@@ -280,6 +285,10 @@ func (r *reader) Read(dst []byte) (int, error) {
 			r.decBufIndex = (r.decBufIndex + 1) % 2
 		}
 		writeOffset += copied
+		if writeOffset == len(dst) {
+			return writeOffset, nil
+		}
+
 	}
 
 	return writeOffset, nil
