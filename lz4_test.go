@@ -230,10 +230,77 @@ func TestSimpleCompressDecompress(t *testing.T) {
 }
 
 func TestIOCopyStreamSimpleCompressionDecompression(t *testing.T) {
-	filename := "sample2.txt"
+	filename := "1557419400MM.idb"
 	inputs, _ := ioutil.ReadFile(filename)
 
-	testIOCopyCompressionDecompression(t, inputs, filename)
+	testIOCopy(t, inputs, filename)
+}
+
+func testIOCopy(t *testing.T, payload []byte, filename string) {
+	fname := filename + "testcom" + ".lz4"
+	file, err := os.Create(fname)
+	failOnError(t, "Failed creating to file", err)
+
+	writer := NewWriter(file)
+	_, err = writer.Write(payload)
+	failOnError(t, "Failed writing to compress object", err)
+	failOnError(t, "Failed to close compress object", writer.Close())
+	stat, err := os.Stat(fname)
+	failOnError(t, "Cannot open file", err)
+
+	t.Logf("Compressed %v -> %v bytes", len(payload), stat.Size())
+
+	// check the compressed file is the same with the one uploaded to S3
+
+	if !checkfilecontentIsSame(t, fname, filename+".lz4") {
+		t.Fatalf("compressed file and the S3 one is not the same: %s != %s", fname, filename+".lz4")
+
+	}
+
+	file.Close()
+
+	// read from the file
+	fi, err := os.Open(fname)
+	failOnError(t, "Failed open file", err)
+	defer fi.Close()
+
+	// decompress the file againg
+	fnameNew := "1557419400NEW.idb"
+
+	fileNew, err := os.Create(fnameNew)
+	failOnError(t, "Failed writing to file", err)
+	defer fileNew.Close()
+
+	// Decompress with streaming API
+	r := NewReader(fi)
+
+	_, err = io.Copy(fileNew, r)
+	failOnError(t, "Failed writing to file", err)
+
+	fileOriginstats, err := os.Stat(filename)
+	fiNewStats, err := fileNew.Stat()
+	if fileOriginstats.Size() != fiNewStats.Size() {
+		t.Fatalf("Not same size files: %d != %d", fileOriginstats.Size(), fiNewStats.Size())
+
+	}
+	// just a check to make sure the file contents are the same
+	if !checkfilecontentIsSame(t, filename, fnameNew) {
+		t.Fatalf("Cannot compressed file and original is not the same: %s != %s", filename, fnameNew)
+
+	}
+
+	failOnError(t, "Failed to close decompress object", r.Close())
+}
+
+func checkfilecontentIsSame(t *testing.T, f1, f2 string) bool {
+	// just a check to make sure the file contents are the same
+	bytes1, err := ioutil.ReadFile(f1)
+	failOnError(t, "Failed reading to file", err)
+
+	bytes2, err := ioutil.ReadFile(f2)
+	failOnError(t, "Failed reading to file", err)
+
+	return bytes.Equal(bytes1, bytes2)
 }
 
 func TestIOCopyDecompression(t *testing.T) {
@@ -256,59 +323,122 @@ func TestIOCopyDecompression(t *testing.T) {
 
 }
 
-func testIOCopyCompressionDecompression(t *testing.T, payload []byte, filename string) {
-	fname := filename + ".lz4"
-	file, err := os.Create(fname)
-	failOnError(t, "Failed creating to file", err)
+func TestContinueCompress(t *testing.T) {
+	payload := []byte("Hello World!")
+	repeat := 100
 
-	writer := NewWriter(file)
-	_, err = writer.Write(payload)
+	var intermediate bytes.Buffer
+	w := NewWriter(&intermediate)
+	for i := 0; i < repeat; i++ {
+		_, err := w.Write(payload)
+		failOnError(t, "Failed writing to compress object", err)
+	}
+	failOnError(t, "Failed closing writer", w.Close())
+
+	// Decompress
+	r := NewReader(&intermediate)
+	dst := make([]byte, len(payload))
+	for i := 0; i < repeat; i++ {
+		n, err := r.Read(dst)
+		failOnError(t, "Failed to decompress", err)
+		if n != len(payload) {
+			t.Fatalf("Did not read enough bytes: %v != %v", n, len(payload))
+		}
+		if string(dst) != string(payload) {
+			t.Fatalf("Did not read the same %s != %s", string(dst), string(payload))
+		}
+	}
+	// Check EOF
+	n, err := r.Read(dst)
+	if err != io.EOF {
+		t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
+	}
+	failOnError(t, "Failed to close decompress object", r.Close())
+
+}
+
+func TestStreamSimpleCompressionDecompression(t *testing.T) {
+	inputs, _ := ioutil.ReadFile("sample2.txt")
+	var bigInput []byte
+	for i := 0; i < 20; i++ {
+		bigInput = append(bigInput, inputs...)
+	}
+	testCompressionDecompression(t, bigInput)
+}
+
+func testCompressionDecompression(t *testing.T, payload []byte) {
+	var w bytes.Buffer
+	writer := NewWriter(&w)
+	n, err := writer.Write(payload)
 	failOnError(t, "Failed writing to compress object", err)
 	failOnError(t, "Failed to close compress object", writer.Close())
-	stat, err := os.Stat(fname)
-	failOnError(t, "Cannot open file", err)
+	out := w.Bytes()
+	t.Logf("Compressed %v -> %v bytes", len(payload), len(out))
+	failOnError(t, "Failed compressing", err)
 
-	t.Logf("Compressed %v -> %v bytes", len(payload), stat.Size())
-
-	file.Close()
-
-	// read from the file
-	fi, err := os.Open(fname)
-	failOnError(t, "Failed open file", err)
-	defer fi.Close()
-
-	// decompress the file againg
-	fnameNew := "1557135000NEW.idb"
-
-	fileNew, err := os.Create(fnameNew)
-	failOnError(t, "Failed writing to file", err)
-	defer fileNew.Close()
-
-	// Decompress with streaming API
-	r := NewReader(fi)
-
-	_, err = io.Copy(fileNew, r)
-	failOnError(t, "Failed writing to file", err)
-
-	fileOriginstats, err := os.Stat(filename)
-	fiNewStats, err := fileNew.Stat()
-	if fileOriginstats.Size() != fiNewStats.Size() {
-		t.Fatalf("Not same size files: %d != %d", fileOriginstats.Size(), fiNewStats.Size())
-
+	// Decompress
+	r := NewReader(&w)
+	dst := make([]byte, len(payload))
+	n, err = r.Read(dst)
+	if err != nil {
+		t.Fatal("error reading", err)
 	}
 
-	// just a check to make sure the file contents are the same
-	f1, err := ioutil.ReadFile(filename)
-	failOnError(t, "Failed reading to file", err)
-
-	f2, err := ioutil.ReadFile(fnameNew)
-	failOnError(t, "Failed reading to file", err)
-
-	if !bytes.Equal(f1, f2) {
-		t.Fatalf("Cannot compressed file and original is not the same: %s != %s", filename, fnameNew)
+	dst = dst[:n]
+	if string(payload) != string(dst) { // Only print if we can print
+		if len(payload) < 100 && len(dst) < 100 {
+			t.Fatalf("Cannot compress and decompress: %s != %s", payload, dst)
+		} else {
+			t.Fatalf("Cannot compress and decompress (lengths: %v bytes & %v bytes)", len(payload), len(dst))
+		}
 	}
-
+	// Check EOF
+	n, err = r.Read(dst)
+	if err != io.EOF && len(dst) > 0 { // If we want 0 bytes, that should work
+		t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
+	}
 	failOnError(t, "Failed to close decompress object", r.Close())
+}
+
+func TestStreamingFuzz(t *testing.T) {
+	f := func(input []byte) bool {
+		var w bytes.Buffer
+		writer := NewWriter(&w)
+		n, err := writer.Write(input)
+		failOnError(t, "Failed writing to compress object", err)
+		failOnError(t, "Failed to close compress object", writer.Close())
+
+		// Decompress
+		r := NewReader(&w)
+		dst := make([]byte, len(input))
+		n, err = r.Read(dst)
+
+		failOnError(t, "Failed Read", err)
+
+		dst = dst[:n]
+		if string(input) != string(dst) { // Only print if we can print
+			if len(input) < 100 && len(dst) < 100 {
+				t.Fatalf("Cannot compress and decompress: %s != %s", input, dst)
+			} else {
+				t.Fatalf("Cannot compress and decompress (lengths: %v bytes & %v bytes)", len(input), len(dst))
+			}
+		}
+		// Check EOF
+		n, err = r.Read(dst)
+		if err != io.EOF && len(dst) > 0 { // If we want 0 bytes, that should work
+			t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
+		}
+		failOnError(t, "Failed to close decompress object", r.Close())
+		return true
+	}
+
+	conf := &quick.Config{MaxCount: 20000}
+	if testing.Short() {
+		conf.MaxCount = 1000
+	}
+	if err := quick.Check(f, conf); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func BenchmarkCompress(b *testing.B) {
