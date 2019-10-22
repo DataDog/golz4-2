@@ -226,10 +226,15 @@ func (r *reader) Read(dst []byte) (int, error) {
 	// C.LZ4_setStreamDecode(r.lz4Stream, nil, 0)
 	// we have leftover decompressed data from previous call
 	if r.decompOffset > 0 {
-		copied := copy(dst[writeOffset:], r.decompressedBuffer[r.decBufIndex][r.decompOffset:])
+		copied := copy(dst[writeOffset:], r.decompressedBuffer[r.decBufIndex][r.decompOffset:r.decompSize])
+		// justWritten := r.decompressedBuffer[r.decBufIndex][r.decompOffset:r.decompSize]
+		// fmt.Println("wrote leftover", len(justWritten), copied)
+		// if bytes.Contains(justWritten, []byte("see me heave")) {
+		// 	fmt.Println("leftover: a very palpable hit")
+		// }
 		if len(dst) == copied {
 			r.decompOffset += copied
-			if r.decompOffset == len(r.decompressedBuffer[r.decBufIndex]) {
+			if r.decompOffset == len(r.decompressedBuffer[r.decBufIndex][0:r.decompSize]) {
 				r.decompOffset = 0
 				r.decBufIndex = (r.decBufIndex + 1) % 2
 			}
@@ -244,13 +249,16 @@ func (r *reader) Read(dst []byte) (int, error) {
 		// Populate src
 		blockSize, err := r.readSize(r.underlyingReader)
 		if err != nil {
+			if err == io.EOF {
+				// fmt.Println("here's our EOF")
+			}
 			return writeOffset, err
 		}
 
 		// if the blockSize is bigger than our configured one, then something
 		// is wrong with the file or it was compressed with a different mechanism
 		if blockSize > len(r.readBuffer) {
-			return writeOffset, fmt.Errorf("invalid block size (Version3)%d", blockSize)
+			return writeOffset, fmt.Errorf("invalid block size (10/21/2019): %d", blockSize)
 		}
 
 		readBuffer := r.readBuffer[:blockSize]
@@ -272,7 +280,13 @@ func (r *reader) Read(dst []byte) (int, error) {
 			break
 		}
 
+		r.decompSize = written
 		copied := copy(dst[writeOffset:], r.decompressedBuffer[r.decBufIndex][:written])
+		// fmt.Println("wrote after read", written, copied)
+		// justWritten := r.decompressedBuffer[r.decBufIndex][:written]
+		// if bytes.Contains(justWritten, []byte("see me heave")) {
+		// 	fmt.Println("read: a avery palable hit")
+		// }
 
 		switch {
 		// have some leftover data from the decompressedBuffer
@@ -290,7 +304,6 @@ func (r *reader) Read(dst []byte) (int, error) {
 		}
 
 	}
-
 	return writeOffset, nil
 }
 
