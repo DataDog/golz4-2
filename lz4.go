@@ -61,7 +61,7 @@ func clen(s []byte) C.int {
 func Uncompress(out, in []byte) (outSize int, err error) {
 	outSize = int(C.LZ4_decompress_safe(p(in), p(out), clen(in), clen(out)))
 	if outSize < 0 {
-		err = errors.New("Malformed compression tream")
+		err = errors.New("Malformed compression stream")
 	}
 	return
 }
@@ -258,7 +258,7 @@ func (r *reader) Read(dst []byte) (int, error) {
 		// if the blockSize is bigger than our configured one, then something
 		// is wrong with the file or it was compressed with a different mechanism
 		if blockSize > len(r.readBuffer) {
-			return writeOffset, fmt.Errorf("invalid block size (Version3): %d", blockSize)
+			return writeOffset, fmt.Errorf("invalid block size (10/21/2019): %d", blockSize)
 		}
 
 		readBuffer := r.readBuffer[:blockSize]
