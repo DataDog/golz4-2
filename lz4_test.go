@@ -7,6 +7,7 @@ package lz4
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -231,24 +232,60 @@ func TestSimpleCompressDecompress(t *testing.T) {
 
 func TestIOCopyStreamSimpleCompressionDecompression(t *testing.T) {
 	filename := "shakespeare.txt"
-	inputs, _ := ioutil.ReadFile(filename)
+	inputs, _ := os.Open(filename)
 
 	testIOCopy(t, inputs, filename)
 }
 
-func testIOCopy(t *testing.T, payload []byte, filename string) {
+func testIOCopy(t *testing.T, src io.Reader, filename string) {
 	fname := filename + "testcom" + ".lz4"
 	file, err := os.Create(fname)
 	failOnError(t, "Failed creating to file", err)
 
 	writer := NewWriter(file)
-	_, err = writer.Write(payload)
-	failOnError(t, "Failed writing to compress object", err)
+
+	// try using io.Copy
+	// copied, err := io.Copy(writer, src)
+	// fmt.Println("// copied:", copied)
+	// failOnError(t, "Failed copied", err)
+	/////////
+
+	// try read file by chunks
+	BufferSize := 1024 * 96
+	buffer := make([]byte, BufferSize)
+	nCum := 0
+	fileCum := 0
+	n := 0
+	var err2 error
+	for {
+		bytesread, err := src.Read(buffer)
+		if bytesread != BufferSize {
+			fmt.Println("let's look at this:", bytesread)
+		}
+		fileCum += bytesread
+		n, err2 = writer.Write(buffer[:bytesread])
+		nCum += n
+		failOnError(t, "Failed writing to compress object", err2)
+
+		if err != nil {
+			if err != io.EOF {
+				fmt.Println(err)
+			}
+			fmt.Println("///EOF: ", bytesread)
+
+			break
+		}
+
+	}
+
 	failOnError(t, "Failed to close compress object", writer.Close())
 	stat, err := os.Stat(fname)
+	filenameSize, err := os.Stat(filename)
 	failOnError(t, "Cannot open file", err)
+	fmt.Println("fileCum", fileCum, "nCum: ", nCum)
 
-	t.Logf("Compressed %v -> %v bytes", len(payload), stat.Size())
+	// t.Logf("Compressed %v -> %v bytes", len(src), stat.Size())
+	t.Logf("Compressed %v -> %v bytes", filenameSize.Size(), stat.Size())
 
 	// check the compressed file is the same with the one uploaded to S3
 
@@ -285,7 +322,7 @@ func testIOCopy(t *testing.T, payload []byte, filename string) {
 	}
 	// just a check to make sure the file contents are the same
 	if !checkfilecontentIsSame(t, filename, fnameNew) {
-		t.Fatalf("Cannot compressed file and original is not the same: %s != %s", filename, fnameNew)
+		t.Fatalf("Original VS Compressed file contents not same: %s != %s", filename, fnameNew)
 
 	}
 

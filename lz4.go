@@ -38,6 +38,7 @@ const (
 	// that they were decompressed to.  This limits us to using a decompression
 	// buffer at least this size, so we might as well actually use this as
 	// the block size.
+	// lower than 63 does not work
 	streamingBlockSize = 1024 * 96
 )
 
