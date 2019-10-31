@@ -232,7 +232,8 @@ func (r *reader) Read(dst []byte) (int, error) {
 // read the 4-byte little endian size from the head of each stream compressed block
 func (r *reader) readSize(rdr io.Reader) (int, error) {
 	var temp [4]byte
-	read, err := io.ReadFull(rdr, temp[:])
+	_, err := io.ReadFull(rdr, temp[:])
+	// _, err := rdr.Read(temp[:])
 	if err != nil {
 		return 0, err
 	}

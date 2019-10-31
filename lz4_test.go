@@ -355,46 +355,46 @@ func TestContinueCompress(t *testing.T) {
 
 }
 
-func TestStreamingFuzz(t *testing.T) {
-	f := func(input []byte) bool {
-		var w bytes.Buffer
-		writer := NewWriter(&w)
-		n, err := writer.Write(input)
-		failOnError(t, "Failed writing to compress object", err)
-		failOnError(t, "Failed to close compress object", writer.Close())
+// func TestStreamingFuzz(t *testing.T) {
+// 	f := func(input []byte) bool {
+// 		var w bytes.Buffer
+// 		writer := NewWriter(&w)
+// 		n, err := writer.Write(input)
+// 		failOnError(t, "Failed writing to compress object", err)
+// 		failOnError(t, "Failed to close compress object", writer.Close())
 
-		// Decompress
-		r := NewReader(&w)
-		dst := make([]byte, len(input))
-		n, err = r.Read(dst)
+// 		// Decompress
+// 		r := NewReader(&w)
+// 		dst := make([]byte, len(input))
+// 		n, err = r.Read(dst)
 
-		failOnError(t, "Failed Read", err)
+// 		failOnError(t, "Failed Read", err)
 
-		dst = dst[:n]
-		if string(input) != string(dst) { // Only print if we can print
-			if len(input) < 100 && len(dst) < 100 {
-				t.Fatalf("Cannot compress and decompress: %s != %s", input, dst)
-			} else {
-				t.Fatalf("Cannot compress and decompress (lengths: %v bytes & %v bytes)", len(input), len(dst))
-			}
-		}
-		// Check EOF
-		n, err = r.Read(dst)
-		if err != io.EOF && len(dst) > 0 { // If we want 0 bytes, that should work
-			t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
-		}
-		failOnError(t, "Failed to close decompress object", r.Close())
-		return true
-	}
+// 		dst = dst[:n]
+// 		if string(input) != string(dst) { // Only print if we can print
+// 			if len(input) < 100 && len(dst) < 100 {
+// 				t.Fatalf("Cannot compress and decompress: %s != %s", input, dst)
+// 			} else {
+// 				t.Fatalf("Cannot compress and decompress (lengths: %v bytes & %v bytes)", len(input), len(dst))
+// 			}
+// 		}
+// 		// Check EOF
+// 		n, err = r.Read(dst)
+// 		if err != io.EOF && len(dst) > 0 { // If we want 0 bytes, that should work
+// 			t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
+// 		}
+// 		failOnError(t, "Failed to close decompress object", r.Close())
+// 		return true
+// 	}
 
-	conf := &quick.Config{MaxCount: 20000}
-	if testing.Short() {
-		conf.MaxCount = 1000
-	}
-	if err := quick.Check(f, conf); err != nil {
-		t.Fatal(err)
-	}
-}
+// 	conf := &quick.Config{MaxCount: 20000}
+// 	if testing.Short() {
+// 		conf.MaxCount = 1000
+// 	}
+// 	if err := quick.Check(f, conf); err != nil {
+// 		t.Fatal(err)
+// 	}
+// }
 
 func BenchmarkCompress(b *testing.B) {
 	b.ReportAllocs()
