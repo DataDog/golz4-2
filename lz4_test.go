@@ -251,7 +251,6 @@ func testIOCopy(t *testing.T, src io.Reader, filename string) {
 	stat, err := os.Stat(fname)
 	filenameSize, err := os.Stat(filename)
 	failOnError(t, "Cannot open file", err)
-	//fmt.Println("fileCum", fileCum, "nCum: ", nCum)
 
 	// t.Logf("Compressed %v -> %v bytes", len(src), stat.Size())
 	t.Logf("Compressed %v -> %v bytes", filenameSize.Size(), stat.Size())
