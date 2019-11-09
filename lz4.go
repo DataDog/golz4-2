@@ -170,10 +170,14 @@ func (w *Writer) Close() error {
 
 // reader is an io.ReadCloser that decompresses when read from.
 type reader struct {
-	lz4Stream          *C.LZ4_streamDecode_t
-	decompressedBuffer [2][boudedStreamingBlockSize]byte
-	underlyingReader   io.Reader
-	decBufIndex        int
+	lz4Stream *C.LZ4_streamDecode_t
+	// decompressedBuffer [2][boudedStreamingBlockSize]byte
+	left             unsafe.Pointer
+	right            unsafe.Pointer
+	underlyingReader io.Reader
+	decBufIndex      int
+	firsttime        bool
+	isLeft           bool
 }
 
 // NewReader creates a new io.ReadCloser.  Reads from the returned ReadCloser
@@ -184,6 +188,10 @@ func NewReader(r io.Reader) io.ReadCloser {
 	return &reader{
 		lz4Stream:        C.LZ4_createStreamDecode(),
 		underlyingReader: r,
+		firsttime:        true,
+		isLeft:           true,
+		left:             C.malloc(boudedStreamingBlockSize),
+		right:            C.malloc(boudedStreamingBlockSize),
 	}
 }
 
@@ -194,6 +202,9 @@ func (r *reader) Close() error {
 		C.LZ4_freeStreamDecode(r.lz4Stream)
 		r.lz4Stream = nil
 	}
+
+	C.free(r.left)
+	C.free(r.right)
 	return nil
 }
 
@@ -211,19 +222,47 @@ func (r *reader) Read(dst []byte) (int, error) {
 		return 0, err
 	}
 
-	ptr := r.decompressedBuffer[r.decBufIndex]
+	// ptr := r.decompressedBuffer[r.decBufIndex]
+
+	// if !r.firsttime {
+	// 	tmp := int(C.LZ4_setStreamDecode(
+	// 		r.lz4Stream,
+	// 		(*C.char)(unsafe.Pointer(&r.decompressedBuffer[(r.decBufIndex+1)%2][0])),
+	// 		C.int(streamingBlockSize),
+	// 	))
+
+	// 	if tmp != 1 {
+	// 		return 0, errors.New("error set Stream Decode")
+	// 	}
+
+	// } else {
+	// 	r.firsttime = false
+	// }
+
+	var ptr unsafe.Pointer
+	if r.isLeft {
+		ptr = r.left
+		r.isLeft = false
+	} else {
+		ptr = r.right
+		r.isLeft = true
+	}
 
 	written := int(C.LZ4_decompress_safe_continue(
 		r.lz4Stream,
 		(*C.char)(unsafe.Pointer(&uncompressedBuf[0])),
-		(*C.char)(unsafe.Pointer(&ptr[0])),
+		(*C.char)(ptr),
 		C.int(blockSize),
-		C.int(streamingBlockSize)),
-	)
-	if written <= 0 {
+		C.int(streamingBlockSize),
+	))
+
+	if written < 0 {
+		fmt.Println("written:", written)
 		return written, errors.New("error decompressing")
 	}
-	copied := copy(dst[:written], ptr[:written])
+	// fmt.Println(hex.EncodeToString(ptr[:]))
+	mySlice := C.GoString((*C.char)(ptr))
+	copied := copy(dst[:written], mySlice[:written])
 
 	r.decBufIndex = (r.decBufIndex + 1) % 2
 	return copied, nil

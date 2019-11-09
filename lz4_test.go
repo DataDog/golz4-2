@@ -243,7 +243,7 @@ func TestIOCopyStreamSimpleCompressionDecompression(t *testing.T) {
 }
 
 func testIOCopy(t *testing.T, src io.Reader, filename string) {
-	fname := filename + "testcom" + ".lz4"
+	fname := filename + "testcom32" + ".lz4"
 	file, err := os.Create(fname)
 	failOnError(t, "Failed creating to file", err)
 
@@ -264,7 +264,7 @@ func testIOCopy(t *testing.T, src io.Reader, filename string) {
 
 	// uplaod to somewhere
 
-	// read from the file
+	// read from the filec
 	fi, err := os.Open(fname)
 	failOnError(t, "Failed open file", err)
 	defer fi.Close()
@@ -387,7 +387,7 @@ func TestGenerateRDMDATA(t *testing.T) {
 
 func TestDecompConcurrently(t *testing.T) {
 	var tests []testfilenames
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 100; i++ {
 		tmp := testfilenames{
 			name:     "test" + strconv.Itoa(i),
 			filename: "shakespeare.txttestcom.result" + strconv.Itoa(i),
@@ -441,7 +441,11 @@ func IOCopyDecompressionwithName(t *testing.T, fileoutcomename string, originalf
 
 	// Decompress with streaming API
 	r := NewReader(fi)
-	_, err = io.Copy(fileNew, r)
+	size := 64 * 1024
+	buf := make([]byte, size)
+	// _, err = io.Copy(fileNew, r)
+	_, err = io.CopyBuffer(fileNew, r, buf)
+
 	failOnError(t, "Failed writing to file", err)
 	if !checkfilecontentIsSame(t, originalfileName, fileoutcomename) {
 		info1, _ := os.Stat(originalfileName)
@@ -451,6 +455,7 @@ func IOCopyDecompressionwithName(t *testing.T, fileoutcomename string, originalf
 	}
 	r.Close()
 	fileNew.Close()
+	os.Remove(fileoutcomename)
 
 }
 
