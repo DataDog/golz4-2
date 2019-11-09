@@ -261,10 +261,13 @@ func (r *reader) Read(dst []byte) (int, error) {
 		return written, errors.New("error decompressing")
 	}
 	// fmt.Println(hex.EncodeToString(ptr[:]))
-	mySlice := C.GoString((*C.char)(ptr))
-	copied := copy(dst[:written], mySlice[:written])
+	// mySlice := C.GoString((*C.char)(ptr))
+	mySlice := C.GoBytes(ptr, C.int(written))
+	mySliceByte := []byte(mySlice)
+	fmt.Println("mySlice len", len(mySlice), "written", written, "len mySliceByte", len(mySliceByte))
+	copied := copy(dst[:written], mySliceByte)
 
-	r.decBufIndex = (r.decBufIndex + 1) % 2
+	// r.decBufIndex = (r.decBufIndex + 1) % 2
 	return copied, nil
 }
 
