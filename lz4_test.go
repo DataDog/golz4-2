@@ -7,13 +7,17 @@ package lz4
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
+	"path"
 	"runtime/debug"
+	"strconv"
 	"testing"
 	"testing/quick"
+	"time"
 )
 
 const corpusSize = 4746
@@ -232,13 +236,14 @@ func TestSimpleCompressDecompress(t *testing.T) {
 
 func TestIOCopyStreamSimpleCompressionDecompression(t *testing.T) {
 	filename := "shakespeare.txt"
+	// filename := "1572534000.idb"
 	inputs, _ := os.Open(filename)
 
 	testIOCopy(t, inputs, filename)
 }
 
 func testIOCopy(t *testing.T, src io.Reader, filename string) {
-	fname := filename + "testcom" + ".lz4"
+	fname := filename + "testcom32" + ".lz4"
 	file, err := os.Create(fname)
 	failOnError(t, "Failed creating to file", err)
 
@@ -257,13 +262,15 @@ func testIOCopy(t *testing.T, src io.Reader, filename string) {
 
 	file.Close()
 
-	// read from the file
+	// uplaod to somewhere
+
+	// read from the filec
 	fi, err := os.Open(fname)
 	failOnError(t, "Failed open file", err)
 	defer fi.Close()
 
 	// decompress the file againg
-	fnameNew := "shakespeare.txt.copy"
+	fnameNew := "zip.copy"
 
 	fileNew, err := os.Create(fnameNew)
 	failOnError(t, "Failed writing to file", err)
@@ -301,15 +308,173 @@ func checkfilecontentIsSame(t *testing.T, f1, f2 string) bool {
 	return bytes.Equal(bytes1, bytes2)
 }
 
-func TestIOCopyDecompression(t *testing.T) {
-	filename := "shakespeare.txttestcom.lz4"
+////// tests
+func generateRandomData(maxSize int) []byte {
+	data := make([]byte, rand.Intn(maxSize))
+	rand.Read(data)
+	return data
+}
+
+func randomnumberRange(min, max int) int {
+	rand.Seed(time.Now().UnixNano())
+	return rand.Intn(max-min+1) + min
+}
+
+func writeTestdataIntoFile(fileNum int, fileFolderName string) ([]string, error) {
+	// defer os.RemoveAll(fileFolderName)
+	var results []string
+	for i := 0; i < fileNum; i++ {
+		fileName := path.Join(fileFolderName, strconv.Itoa(i))
+		fmt.Println("fileName:", fileName)
+		results = append(results, fileName)
+
+		datasizeRM := randomnumberRange(5000000, 6600000)
+		data := generateRandomData(datasizeRM)
+
+		fi, err := createFile(fileName)
+		if err != nil {
+			return nil, err
+		}
+
+		_, err = fi.Write(data)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return results, nil
+}
+
+func createFile(fpath string) (*os.File, error) {
+	if err := os.MkdirAll(path.Dir(fpath), 0755); err != nil {
+		return nil, err
+	}
+	fd, err := os.Create(fpath)
+	if err != nil {
+		return nil, err
+	}
+	return fd, nil
+}
+
+type testfilenames struct {
+	name     string
+	filename string
+}
+
+func TestGenerateRDMDATA(t *testing.T) {
+	testRoot := "test"
+	defer os.RemoveAll(testRoot)
+
+	filenames, err := writeTestdataIntoFile(100, testRoot)
+	failOnError(t, "Failed createrandom file", err)
+	var tests []testfilenames
+	for i, name := range filenames {
+		tmp := testfilenames{
+			name:     "test" + strconv.Itoa(i),
+			filename: name,
+		}
+		tests = append(tests, tmp)
+	}
+	t.Parallel()
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			IOCopyCompressionwithName(t, tc.filename)
+			IOCopyDecompressionwithName(t, tc.filename+".lz4", tc.filename)
+		})
+	}
+
+}
+
+func TestDecompConcurrently(t *testing.T) {
+	var tests []testfilenames
+	for i := 0; i < 100; i++ {
+		tmp := testfilenames{
+			name:     "test" + strconv.Itoa(i),
+			filename: "shakespeare.txttestcom.result" + strconv.Itoa(i),
+		}
+		tests = append(tests, tmp)
+	}
+	t.Parallel()
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			// IOCopyCompressionwithName(t, tc.filename)
+			IOCopyDecompressionwithName(t, tc.filename, "shakespeare.txt")
+		})
+	}
+
+}
+
+func IOCopyCompressionwithName(t *testing.T, filename string) {
+	fname := filename + ".lz4"
+	file, err := os.Create(fname)
+	failOnError(t, "Failed creating to file", err)
+
+	writer := NewWriter(file)
+
+	src, err := os.Open(filename)
+
+	_, err = io.Copy(writer, src)
+	failOnError(t, "Failed witting to file", err)
+
+	failOnError(t, "Failed to close compress object", writer.Close())
+	stat, err := os.Stat(fname)
+	filenameSize, err := os.Stat(filename)
+	failOnError(t, "Cannot open file", err)
+
+	t.Logf("Compressed %v -> %v bytes", filenameSize.Size(), stat.Size())
+
+	file.Close()
+}
+
+func IOCopyDecompressionwithName(t *testing.T, fileoutcomename string, originalfileName string) {
+
 	// read from the file
-	fi, err := os.Open(filename)
+	fi, err := os.Open("shakespeare.txttestcom.lz4")
+
 	failOnError(t, "Failed open file", err)
 	defer fi.Close()
 
+	fileNew, err := os.Create(fileoutcomename)
+	failOnError(t, "Failed writing to file", err)
+	defer fileNew.Close()
+
+	// Decompress with streaming API
+	r := NewReader(fi)
+	size := 64 * 1024
+	buf := make([]byte, size)
+	// _, err = io.Copy(fileNew, r)
+	_, err = io.CopyBuffer(fileNew, r, buf)
+
+	failOnError(t, "Failed writing to file", err)
+	if !checkfilecontentIsSame(t, originalfileName, fileoutcomename) {
+		info1, _ := os.Stat(originalfileName)
+		info2, _ := os.Stat(fileoutcomename)
+		t.Fatalf("%s VS %s contents not same, size: %d VS %d", originalfileName, fileoutcomename, info1.Size(), info2.Size())
+
+	}
+	r.Close()
+	fileNew.Close()
+	os.Remove(fileoutcomename)
+
+}
+
+func TestIOCopyDecompression(t *testing.T) {
+
+	// filename := "shakespeare.txttestcom.lz4"
+	filename := "S3_mnt.spidly.139.1573054200.idb.lz4"
+	// read from the file
+	fi, err := os.Open(filename)
+
+	failOnError(t, "Failed open file", err)
+	defer fi.Close()
+
+	// resp, err := http.Get("https://github.com/HippoBaro/testup/raw/master/shakespeare.txttestcom.lz4.txt")
+	// failOnError(t, "Failed writing to file", err)
+
 	// decompress into this new file
-	fnameNew := "shakespeare.txt.copy"
+	fnameNew := "S3_mnt.spidly.139.1573054200.idb.copy"
+	// fnameNew := "shakespeare.txt.copy"
 	fileNew, err := os.Create(fnameNew)
 	failOnError(t, "Failed writing to file", err)
 	defer fileNew.Close()
@@ -318,6 +483,12 @@ func TestIOCopyDecompression(t *testing.T) {
 	r := NewReader(fi)
 	_, err = io.Copy(fileNew, r)
 	failOnError(t, "Failed writing to file", err)
+	// checkFilename := "host_1572552000.idb"
+	checkFilename := "shakespeare.txt"
+	if !checkfilecontentIsSame(t, checkFilename, fnameNew) {
+		t.Fatalf("Original VS Compressed file contents not same: %s != %s", checkFilename, fnameNew)
+
+	}
 
 }
 
@@ -355,46 +526,46 @@ func TestContinueCompress(t *testing.T) {
 
 }
 
-// func TestStreamingFuzz(t *testing.T) {
-// 	f := func(input []byte) bool {
-// 		var w bytes.Buffer
-// 		writer := NewWriter(&w)
-// 		n, err := writer.Write(input)
-// 		failOnError(t, "Failed writing to compress object", err)
-// 		failOnError(t, "Failed to close compress object", writer.Close())
+func TestStreamingFuzz(t *testing.T) {
+	f := func(input []byte) bool {
+		var w bytes.Buffer
+		writer := NewWriter(&w)
+		n, err := writer.Write(input)
+		failOnError(t, "Failed writing to compress object", err)
+		failOnError(t, "Failed to close compress object", writer.Close())
 
-// 		// Decompress
-// 		r := NewReader(&w)
-// 		dst := make([]byte, len(input))
-// 		n, err = r.Read(dst)
+		// Decompress
+		r := NewReader(&w)
+		dst := make([]byte, len(input))
+		n, err = r.Read(dst)
 
-// 		failOnError(t, "Failed Read", err)
+		failOnError(t, "Failed Read", err)
 
-// 		dst = dst[:n]
-// 		if string(input) != string(dst) { // Only print if we can print
-// 			if len(input) < 100 && len(dst) < 100 {
-// 				t.Fatalf("Cannot compress and decompress: %s != %s", input, dst)
-// 			} else {
-// 				t.Fatalf("Cannot compress and decompress (lengths: %v bytes & %v bytes)", len(input), len(dst))
-// 			}
-// 		}
-// 		// Check EOF
-// 		n, err = r.Read(dst)
-// 		if err != io.EOF && len(dst) > 0 { // If we want 0 bytes, that should work
-// 			t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
-// 		}
-// 		failOnError(t, "Failed to close decompress object", r.Close())
-// 		return true
-// 	}
+		dst = dst[:n]
+		if string(input) != string(dst) { // Only print if we can print
+			if len(input) < 100 && len(dst) < 100 {
+				t.Fatalf("Cannot compress and decompress: %s != %s", input, dst)
+			} else {
+				t.Fatalf("Cannot compress and decompress (lengths: %v bytes & %v bytes)", len(input), len(dst))
+			}
+		}
+		// Check EOF
+		n, err = r.Read(dst)
+		if err != io.EOF && len(dst) > 0 { // If we want 0 bytes, that should work
+			t.Fatalf("Error should have been EOF, was %s instead: (%v bytes read: %s)", err, n, dst[:n])
+		}
+		failOnError(t, "Failed to close decompress object", r.Close())
+		return true
+	}
 
-// 	conf := &quick.Config{MaxCount: 20000}
-// 	if testing.Short() {
-// 		conf.MaxCount = 1000
-// 	}
-// 	if err := quick.Check(f, conf); err != nil {
-// 		t.Fatal(err)
-// 	}
-// }
+	conf := &quick.Config{MaxCount: 100}
+	if testing.Short() {
+		conf.MaxCount = 1000
+	}
+	if err := quick.Check(f, conf); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func BenchmarkCompress(b *testing.B) {
 	b.ReportAllocs()
