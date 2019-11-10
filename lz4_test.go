@@ -235,8 +235,8 @@ func TestSimpleCompressDecompress(t *testing.T) {
 }
 
 func TestIOCopyStreamSimpleCompressionDecompression(t *testing.T) {
-	filename := "shakespeare.txt"
-	// filename := "1572534000.idb"
+	// filename := "shakespeare.txt"
+	filename := "1573342200.idb"
 	inputs, _ := os.Open(filename)
 
 	testIOCopy(t, inputs, filename)
@@ -387,11 +387,11 @@ func TestGenerateRDMDATA(t *testing.T) {
 
 func TestDecompConcurrently(t *testing.T) {
 	var tests []testfilenames
-	for i := 0; i < 1; i++ {
+	for i := 0; i < 1000; i++ {
 		tmp := testfilenames{
 			name: "test" + strconv.Itoa(i),
 			// filename: "shakespeare.txttestcom.result" + strconv.Itoa(i),
-			filename: "mnt.spidly.0.1573336800.idb.result" + strconv.Itoa(i),
+			filename: "1573342200.idb.result" + strconv.Itoa(i),
 		}
 		tests = append(tests, tmp)
 	}
@@ -401,7 +401,7 @@ func TestDecompConcurrently(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// IOCopyCompressionwithName(t, tc.filename)
 			// IOCopyDecompressionwithName(t, tc.filename, "shakespeare.txt")
-			IOCopyDecompressionwithName(t, tc.filename, "mnt.spidly.0.1573336800.idb")
+			IOCopyDecompressionwithName(t, tc.filename, "1573342200.idb")
 		})
 	}
 
@@ -432,7 +432,7 @@ func IOCopyCompressionwithName(t *testing.T, filename string) {
 func IOCopyDecompressionwithName(t *testing.T, fileoutcomename string, originalfileName string) {
 
 	// read from the file
-	fi, err := os.Open("mnt.spidly.0.1573336800.idb.lz4")
+	fi, err := os.Open("1573342200.idbtestcom.lz4")
 	// fi, err := os.Open("shakespeare.txttestcom.lz4")
 
 	failOnError(t, "Failed open file", err)
@@ -450,15 +450,16 @@ func IOCopyDecompressionwithName(t *testing.T, fileoutcomename string, originalf
 	// _, err = io.CopyBuffer(fileNew, r, buf)
 
 	failOnError(t, "Failed writing to file", err)
-	// if !checkfilecontentIsSame(t, originalfileName, fileoutcomename) {
-	// 	info1, _ := os.Stat(originalfileName)
-	// 	info2, _ := os.Stat(fileoutcomename)
-	// 	t.Fatalf("%s VS %s contents not same, size: %d VS %d", originalfileName, fileoutcomename, info1.Size(), info2.Size())
 
-	// }
+	if !checkfilecontentIsSame(t, originalfileName, fileoutcomename) {
+		info1, _ := os.Stat(originalfileName)
+		info2, _ := os.Stat(fileoutcomename)
+		t.Fatalf("%s VS %s contents not same, size: %d VS %d", originalfileName, fileoutcomename, info1.Size(), info2.Size())
+
+	}
 	r.Close()
 	fileNew.Close()
-	// os.Remove(fileoutcomename)
+	os.Remove(fileoutcomename)
 
 }
 

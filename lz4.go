@@ -222,6 +222,9 @@ func (r *reader) Read(dst []byte) (int, error) {
 		return 0, err
 	}
 
+	// to C
+	uncomBufferC := C.CBytes(uncompressedBuf[:blockSize])
+
 	// ptr := r.decompressedBuffer[r.decBufIndex]
 
 	// if !r.firsttime {
@@ -251,22 +254,21 @@ func (r *reader) Read(dst []byte) (int, error) {
 	written := int(C.LZ4_decompress_safe_continue(
 		r.lz4Stream,
 		(*C.char)(unsafe.Pointer(&uncompressedBuf[0])),
+		// (*C.char)(uncomBufferC),
 		(*C.char)(ptr),
 		C.int(blockSize),
 		C.int(streamingBlockSize),
 	))
 
 	if written < 0 {
-		fmt.Println("written:", written)
 		return written, errors.New("error decompressing")
 	}
 	// fmt.Println(hex.EncodeToString(ptr[:]))
 	// mySlice := C.GoString((*C.char)(ptr))
 	mySlice := C.GoBytes(ptr, C.int(written))
 	mySliceByte := []byte(mySlice)
-	fmt.Println("mySlice len", len(mySlice), "written", written, "len mySliceByte", len(mySliceByte))
 	copied := copy(dst[:written], mySliceByte)
-
+	C.free(uncomBufferC)
 	// r.decBufIndex = (r.decBufIndex + 1) % 2
 	return copied, nil
 }
