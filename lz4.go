@@ -1,24 +1,8 @@
 package lz4
 
-/*#cgo CFLAGS: -O3
-#include "src/lz4.h"
-#include "src/lz4.c"
-
-static int LZ4_decompress_safe_continue_and_memcpy(
-	LZ4_streamDecode_t* stream,
-	const char* src, int srcSize,
-	char* dstBuf, int dstBufCapacity,
-	char* dst)
-{
-	// decompress to double buffer
-	int result = LZ4_decompress_safe_continue(stream, src, dstBuf, srcSize, dstBufCapacity);
-	if (result > 0) {
-		// copy decompressed data to dst
-		memcpy(dst, dstBuf, (size_t)result);
-	}
-	return result;
-}
-*/
+// #cgo CFLAGS: -O3
+// #include "src/lz4.h"
+// #include "src/lz4.c"
 import "C"
 
 import (
@@ -38,9 +22,7 @@ const (
 	// that they were decompressed to.  This limits us to using a decompression
 	// buffer at least this size, so we might as well actually use this as
 	// the block size.
-	// lower than 63 does not work
-	streamingBlockSize = 1024 * 64
-
+	streamingBlockSize       = 1024 * 64
 	boudedStreamingBlockSize = streamingBlockSize + streamingBlockSize/255 + 16
 )
 
@@ -139,7 +121,7 @@ func (w *Writer) Write(src []byte) (int, error) {
 		return 0, errors.New("error compressing")
 	}
 
-	//Write "header" to the buffer for decompression
+	// Write "header" to the buffer for decompression
 	var header [4]byte
 	binary.LittleEndian.PutUint32(header[:], uint32(written))
 	_, err := w.underlyingWriter.Write(header[:])
@@ -170,13 +152,10 @@ func (w *Writer) Close() error {
 
 // reader is an io.ReadCloser that decompresses when read from.
 type reader struct {
-	lz4Stream *C.LZ4_streamDecode_t
-	// decompressedBuffer [2][boudedStreamingBlockSize]byte
+	lz4Stream        *C.LZ4_streamDecode_t
 	left             unsafe.Pointer
 	right            unsafe.Pointer
 	underlyingReader io.Reader
-	decBufIndex      int
-	firsttime        bool
 	isLeft           bool
 }
 
@@ -188,7 +167,6 @@ func NewReader(r io.Reader) io.ReadCloser {
 	return &reader{
 		lz4Stream:        C.LZ4_createStreamDecode(),
 		underlyingReader: r,
-		firsttime:        true,
 		isLeft:           true,
 		left:             C.malloc(boudedStreamingBlockSize),
 		right:            C.malloc(boudedStreamingBlockSize),
@@ -222,26 +200,6 @@ func (r *reader) Read(dst []byte) (int, error) {
 		return 0, err
 	}
 
-	// to C
-	uncomBufferC := C.CBytes(uncompressedBuf[:blockSize])
-
-	// ptr := r.decompressedBuffer[r.decBufIndex]
-
-	// if !r.firsttime {
-	// 	tmp := int(C.LZ4_setStreamDecode(
-	// 		r.lz4Stream,
-	// 		(*C.char)(unsafe.Pointer(&r.decompressedBuffer[(r.decBufIndex+1)%2][0])),
-	// 		C.int(streamingBlockSize),
-	// 	))
-
-	// 	if tmp != 1 {
-	// 		return 0, errors.New("error set Stream Decode")
-	// 	}
-
-	// } else {
-	// 	r.firsttime = false
-	// }
-
 	var ptr unsafe.Pointer
 	if r.isLeft {
 		ptr = r.left
@@ -254,7 +212,6 @@ func (r *reader) Read(dst []byte) (int, error) {
 	written := int(C.LZ4_decompress_safe_continue(
 		r.lz4Stream,
 		(*C.char)(unsafe.Pointer(&uncompressedBuf[0])),
-		// (*C.char)(uncomBufferC),
 		(*C.char)(ptr),
 		C.int(blockSize),
 		C.int(streamingBlockSize),
@@ -264,12 +221,8 @@ func (r *reader) Read(dst []byte) (int, error) {
 		return written, errors.New("error decompressing")
 	}
 	// fmt.Println(hex.EncodeToString(ptr[:]))
-	// mySlice := C.GoString((*C.char)(ptr))
 	mySlice := C.GoBytes(ptr, C.int(written))
-	mySliceByte := []byte(mySlice)
-	copied := copy(dst[:written], mySliceByte)
-	C.free(uncomBufferC)
-	// r.decBufIndex = (r.decBufIndex + 1) % 2
+	copied := copy(dst[:written], mySlice)
 	return copied, nil
 }
 
@@ -277,7 +230,6 @@ func (r *reader) Read(dst []byte) (int, error) {
 func (r *reader) readSize(rdr io.Reader) (int, error) {
 	var temp [4]byte
 	_, err := io.ReadFull(rdr, temp[:])
-	// _, err := rdr.Read(temp[:])
 	if err != nil {
 		return 0, err
 	}

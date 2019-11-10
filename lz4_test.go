@@ -7,17 +7,15 @@ package lz4
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"math/rand"
 	"os"
-	"path"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"testing"
 	"testing/quick"
-	"time"
 )
 
 const corpusSize = 4746
@@ -48,8 +46,7 @@ func TestCompressionRatio(t *testing.T) {
 }
 
 func TestCompression(t *testing.T) {
-	// input := []byte(strings.Repeat("Hello world, this is quite something", 10))
-	input, _ := ioutil.ReadFile("sample2.txt")
+	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	output := make([]byte, CompressBound(input))
 	outSize, err := Compress(output, input)
 	if err != nil {
@@ -114,8 +111,7 @@ func TestNoCompression(t *testing.T) {
 }
 
 func TestCompressionError(t *testing.T) {
-	input, _ := ioutil.ReadFile("sample2.txt")
-	// input := []byte(strings.Repeat("Hello world, this is quite something", 10))
+	input := []byte(strings.Repeat("Hello world, this is quite something", 10))
 	output := make([]byte, 1)
 	_, err := Compress(output, input)
 	if err == nil {
@@ -130,9 +126,7 @@ func TestCompressionError(t *testing.T) {
 }
 
 func TestDecompressionError(t *testing.T) {
-	// input := []byte(strings.Repeat("Hello world, this is quite something", 10000))
-	input, _ := ioutil.ReadFile("sample2.txt")
-
+	input := []byte(strings.Repeat("Hello world, this is quite something", 10000))
 	output := make([]byte, CompressBound(input))
 	outSize, err := Compress(output, input)
 	if err != nil {
@@ -235,8 +229,7 @@ func TestSimpleCompressDecompress(t *testing.T) {
 }
 
 func TestIOCopyStreamSimpleCompressionDecompression(t *testing.T) {
-	// filename := "shakespeare.txt"
-	filename := "1573342200.idb"
+	filename := "shakespeare.txt"
 	inputs, _ := os.Open(filename)
 
 	testIOCopy(t, inputs, filename)
@@ -257,12 +250,9 @@ func testIOCopy(t *testing.T, src io.Reader, filename string) {
 	filenameSize, err := os.Stat(filename)
 	failOnError(t, "Cannot open file", err)
 
-	// t.Logf("Compressed %v -> %v bytes", len(src), stat.Size())
 	t.Logf("Compressed %v -> %v bytes", filenameSize.Size(), stat.Size())
 
 	file.Close()
-
-	// uplaod to somewhere
 
 	// read from the filec
 	fi, err := os.Open(fname)
@@ -270,7 +260,7 @@ func testIOCopy(t *testing.T, src io.Reader, filename string) {
 	defer fi.Close()
 
 	// decompress the file againg
-	fnameNew := "zip.copy"
+	fnameNew := filename + ".copy"
 
 	fileNew, err := os.Create(fnameNew)
 	failOnError(t, "Failed writing to file", err)
@@ -308,90 +298,18 @@ func checkfilecontentIsSame(t *testing.T, f1, f2 string) bool {
 	return bytes.Equal(bytes1, bytes2)
 }
 
-////// tests
-func generateRandomData(maxSize int) []byte {
-	data := make([]byte, rand.Intn(maxSize))
-	rand.Read(data)
-	return data
-}
-
-func randomnumberRange(min, max int) int {
-	rand.Seed(time.Now().UnixNano())
-	return rand.Intn(max-min+1) + min
-}
-
-func writeTestdataIntoFile(fileNum int, fileFolderName string) ([]string, error) {
-	// defer os.RemoveAll(fileFolderName)
-	var results []string
-	for i := 0; i < fileNum; i++ {
-		fileName := path.Join(fileFolderName, strconv.Itoa(i))
-		fmt.Println("fileName:", fileName)
-		results = append(results, fileName)
-
-		datasizeRM := randomnumberRange(5000000, 6600000)
-		data := generateRandomData(datasizeRM)
-
-		fi, err := createFile(fileName)
-		if err != nil {
-			return nil, err
-		}
-
-		_, err = fi.Write(data)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return results, nil
-}
-
-func createFile(fpath string) (*os.File, error) {
-	if err := os.MkdirAll(path.Dir(fpath), 0755); err != nil {
-		return nil, err
-	}
-	fd, err := os.Create(fpath)
-	if err != nil {
-		return nil, err
-	}
-	return fd, nil
-}
-
 type testfilenames struct {
 	name     string
 	filename string
 }
 
-func TestGenerateRDMDATA(t *testing.T) {
-	testRoot := "test"
-	defer os.RemoveAll(testRoot)
-
-	filenames, err := writeTestdataIntoFile(100, testRoot)
-	failOnError(t, "Failed createrandom file", err)
-	var tests []testfilenames
-	for i, name := range filenames {
-		tmp := testfilenames{
-			name:     "test" + strconv.Itoa(i),
-			filename: name,
-		}
-		tests = append(tests, tmp)
-	}
-	t.Parallel()
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			IOCopyCompressionwithName(t, tc.filename)
-			IOCopyDecompressionwithName(t, tc.filename+".lz4", tc.filename)
-		})
-	}
-
-}
-
 func TestDecompConcurrently(t *testing.T) {
 	var tests []testfilenames
-	for i := 0; i < 1000; i++ {
+	// run 100 times
+	for i := 0; i < 100; i++ {
 		tmp := testfilenames{
-			name: "test" + strconv.Itoa(i),
-			// filename: "shakespeare.txttestcom.result" + strconv.Itoa(i),
-			filename: "1573342200.idb.result" + strconv.Itoa(i),
+			name:     "test" + strconv.Itoa(i),
+			filename: "shakespeare.txttestcom.result" + strconv.Itoa(i),
 		}
 		tests = append(tests, tmp)
 	}
@@ -399,42 +317,15 @@ func TestDecompConcurrently(t *testing.T) {
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			// IOCopyCompressionwithName(t, tc.filename)
-			// IOCopyDecompressionwithName(t, tc.filename, "shakespeare.txt")
-			IOCopyDecompressionwithName(t, tc.filename, "1573342200.idb")
+			IOCopyDecompressionwithName(t, tc.filename, "shakespeare.txt")
 		})
 	}
 
-}
-
-func IOCopyCompressionwithName(t *testing.T, filename string) {
-	fname := filename + ".lz4"
-	file, err := os.Create(fname)
-	failOnError(t, "Failed creating to file", err)
-
-	writer := NewWriter(file)
-
-	src, err := os.Open(filename)
-
-	_, err = io.Copy(writer, src)
-	failOnError(t, "Failed witting to file", err)
-
-	failOnError(t, "Failed to close compress object", writer.Close())
-	stat, err := os.Stat(fname)
-	filenameSize, err := os.Stat(filename)
-	failOnError(t, "Cannot open file", err)
-
-	t.Logf("Compressed %v -> %v bytes", filenameSize.Size(), stat.Size())
-
-	file.Close()
 }
 
 func IOCopyDecompressionwithName(t *testing.T, fileoutcomename string, originalfileName string) {
-
 	// read from the file
-	fi, err := os.Open("1573342200.idbtestcom.lz4")
-	// fi, err := os.Open("shakespeare.txttestcom.lz4")
-
+	fi, err := os.Open("shakespeare.txttestcom.lz4")
 	failOnError(t, "Failed open file", err)
 	defer fi.Close()
 
@@ -444,10 +335,7 @@ func IOCopyDecompressionwithName(t *testing.T, fileoutcomename string, originalf
 
 	// Decompress with streaming API
 	r := NewReader(fi)
-	// size := 64 * 1024
-	// buf := make([]byte, size)
 	_, err = io.Copy(fileNew, r)
-	// _, err = io.CopyBuffer(fileNew, r, buf)
 
 	failOnError(t, "Failed writing to file", err)
 
@@ -465,20 +353,15 @@ func IOCopyDecompressionwithName(t *testing.T, fileoutcomename string, originalf
 
 func TestIOCopyDecompression(t *testing.T) {
 
-	// filename := "shakespeare.txttestcom.lz4"
-	filename := "S3_mnt.spidly.139.1573054200.idb.lz4"
+	filename := "shakespeare.txttestcom.lz4"
 	// read from the file
 	fi, err := os.Open(filename)
 
 	failOnError(t, "Failed open file", err)
 	defer fi.Close()
 
-	// resp, err := http.Get("https://github.com/HippoBaro/testup/raw/master/shakespeare.txttestcom.lz4.txt")
-	// failOnError(t, "Failed writing to file", err)
-
 	// decompress into this new file
-	fnameNew := "S3_mnt.spidly.139.1573054200.idb.copy"
-	// fnameNew := "shakespeare.txt.copy"
+	fnameNew := "shakespeare.txt.copy"
 	fileNew, err := os.Create(fnameNew)
 	failOnError(t, "Failed writing to file", err)
 	defer fileNew.Close()
@@ -487,7 +370,6 @@ func TestIOCopyDecompression(t *testing.T) {
 	r := NewReader(fi)
 	_, err = io.Copy(fileNew, r)
 	failOnError(t, "Failed writing to file", err)
-	// checkFilename := "host_1572552000.idb"
 	checkFilename := "shakespeare.txt"
 	if !checkfilecontentIsSame(t, checkFilename, fnameNew) {
 		t.Fatalf("Original VS Compressed file contents not same: %s != %s", checkFilename, fnameNew)
@@ -583,6 +465,25 @@ func BenchmarkCompress(b *testing.B) {
 	}
 }
 
+func BenchmarkCompressUncompress(b *testing.B) {
+	b.ReportAllocs()
+	compressed := make([]byte, CompressBound(plaintext0))
+	n, err := Compress(compressed, plaintext0)
+	if err != nil {
+		b.Errorf("Compress error: %v", err)
+	}
+	compressed = compressed[:n]
+
+	dst := make([]byte, len(plaintext0))
+	b.SetBytes(int64(len(plaintext0)))
+	for i := 0; i < b.N; i++ {
+		_, err := Uncompress(dst, compressed)
+		if err != nil {
+			b.Errorf("Uncompress error: %v", err)
+		}
+	}
+}
+
 func BenchmarkStreamCompress(b *testing.B) {
 	var buffer bytes.Buffer
 	localBuffer := make([]byte, streamingBlockSize)
@@ -633,25 +534,6 @@ func BenchmarkStreamUncompress(b *testing.B) {
 				b.Fatalf("Failed to decompress: %s", err)
 			}
 			b.SetBytes(int64(read))
-		}
-	}
-}
-
-func BenchmarkCompressUncompress(b *testing.B) {
-	b.ReportAllocs()
-	compressed := make([]byte, CompressBound(plaintext0))
-	n, err := Compress(compressed, plaintext0)
-	if err != nil {
-		b.Errorf("Compress error: %v", err)
-	}
-	compressed = compressed[:n]
-
-	dst := make([]byte, len(plaintext0))
-	b.SetBytes(int64(len(plaintext0)))
-	for i := 0; i < b.N; i++ {
-		_, err := Uncompress(dst, compressed)
-		if err != nil {
-			b.Errorf("Uncompress error: %v", err)
 		}
 	}
 }
