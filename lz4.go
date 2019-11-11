@@ -168,8 +168,10 @@ func NewReader(r io.Reader) io.ReadCloser {
 		lz4Stream:        C.LZ4_createStreamDecode(),
 		underlyingReader: r,
 		isLeft:           true,
-		left:             C.malloc(boudedStreamingBlockSize),
-		right:            C.malloc(boudedStreamingBlockSize),
+		// double buffer needs to use C.malloc to make sure the same memory address
+		// allocate buffers in go memory will fail randomly since GC may move the memory
+		left:  C.malloc(boudedStreamingBlockSize),
+		right: C.malloc(boudedStreamingBlockSize),
 	}
 }
 
